@@ -1,0 +1,591 @@
+import os
+import tempfile
+import subprocess
+import numpy as np
+from scipy.io import wavfile
+from loguru import logger
+from app.core.config import settings
+from blind_watermark import WaterMark
+
+# ---------------------------------------------------------
+# IMAGE BLIND WATERMARK
+# ---------------------------------------------------------
+
+WM_SHAPE_LENGTH_OLD = 64
+WM_SHAPE_LENGTH_NEW = 128
+
+def _pad_id_v2(creator_id: str, viewer_id: str = "") -> str:
+    """Đệm chuỗi 128 bytes chứa cả 2 ID."""
+    creator_id_ascii = creator_id.encode('ascii', 'ignore').decode('ascii')
+    viewer_id_ascii = viewer_id.encode('ascii', 'ignore').decode('ascii') if viewer_id else "NONE"
+    
+    payload = f"C:{creator_id_ascii}|V:{viewer_id_ascii}"
+    return payload.ljust(WM_SHAPE_LENGTH_NEW, ' ')[:WM_SHAPE_LENGTH_NEW]
+
+def _ensure_3_channels(image_bytes: bytes) -> bytes:
+    """Xử lý ảnh grayscale (2D) hoặc RGBA (4D) về BGR (3D) để tránh lỗi tuple index out of range của blind_watermark."""
+    import cv2
+    import numpy as np
+    
+    # Đọc ảnh từ byte array
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
+    
+    if img is None:
+        raise ValueError("Không thể đọc định dạng ảnh này")
+        
+    # Nếu là ảnh Grayscale (chỉ có 2 chiều H, W) -> Chuyển sang BGR (3 chiều)
+    if len(img.shape) == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    
+    # Lưu lại thành file byte PNG
+    success, encoded_image = cv2.imencode('.png', img)
+    if not success:
+        raise ValueError("Lỗi khi encode ảnh sang định dạng PNG")
+        
+    return encoded_image.tobytes()
+
+def embed_image_watermark(image_bytes: bytes, creator_id: str, viewer_id: str = "") -> bytes:
+    """Nhúng watermark ẩn vào hình ảnh (DWT-DCT-SVD)."""
+    padded_id = _pad_id_v2(creator_id, viewer_id)
+    
+    # Xử lý lỗi tuple index out of range cho ảnh đen trắng
+    processed_image_bytes = _ensure_3_channels(image_bytes)
+    
+    tmp_in = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    tmp_out = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        
+    tmp_in.write(processed_image_bytes)
+    tmp_in.close()
+    tmp_out.close()
+        
+    try:
+        bwm = WaterMark(
+            password_img=settings.WATERMARK_PASSWORD_IMG, 
+            password_wm=settings.WATERMARK_PASSWORD_WM
+        )
+        bwm.read_img(tmp_in.name)
+        # Sử dụng chuẩn mode='str' y hệt như bản gốc
+        bwm.read_wm(padded_id, mode='str')
+        bwm.embed(tmp_out.name)
+        
+        with open(tmp_out.name, "rb") as f:
+            out_bytes = f.read()
+    except Exception as e:
+        logger.error(f"Lỗi khi nhúng blind watermark ảnh: {e}")
+        raise e
+    finally:
+        if os.path.exists(tmp_in.name): os.remove(tmp_in.name)
+        if os.path.exists(tmp_out.name): os.remove(tmp_out.name)
+            
+    return out_bytes
+
+def extract_image_watermark(image_bytes: bytes) -> dict:
+    """Trích xuất watermark ẩn từ hình ảnh. Trả về dict chứa creator_id và viewer_id."""
+    processed_image_bytes = _ensure_3_channels(image_bytes)
+    
+    tmp_in = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    tmp_in.write(processed_image_bytes)
+    tmp_in.close()
+        
+    try:
+        bwm = WaterMark(
+            password_img=settings.WATERMARK_PASSWORD_IMG, 
+            password_wm=settings.WATERMARK_PASSWORD_WM
+        )
+        
+        # 1. Thử quét với format mới (128 bytes) chứa cả 2 ID
+        try:
+            wm_shape_exact = (WM_SHAPE_LENGTH_NEW * 8) - 1
+            extracted = bwm.extract(tmp_in.name, wm_shape=wm_shape_exact, mode='str')
+            extracted_clean = extracted.strip()
+            
+            if extracted_clean.startswith("C:"):
+                parts = extracted_clean.split("|V:")
+                creator_id = parts[0][2:] if len(parts) > 0 else None
+                viewer_id = parts[1] if len(parts) > 1 else None
+                if viewer_id == "NONE":
+                    viewer_id = None
+                return {"creator_id": creator_id, "viewer_id": viewer_id}
+        except Exception:
+            pass
+            
+        # 2. Quét dự phòng với format cũ (64 bytes) chỉ chứa Creator ID
+        try:
+            wm_shape_exact = (WM_SHAPE_LENGTH_OLD * 8) - 1
+            extracted = bwm.extract(tmp_in.name, wm_shape=wm_shape_exact, mode='str')
+            extracted_clean = extracted.strip()
+            
+            if extracted_clean.startswith("ID:"):
+                c_id = extracted_clean.replace("ID: ", "").split(" - ")[0]
+                return {"creator_id": c_id, "viewer_id": None}
+        except Exception:
+            pass
+            
+        return {"creator_id": None, "viewer_id": None}
+        
+    except Exception as e:
+        logger.error(f"Lỗi khi trích xuất blind watermark ảnh: {e}")
+        raise e
+    finally:
+        if os.path.exists(tmp_in.name): os.remove(tmp_in.name)
+
+
+# ---------------------------------------------------------
+# VIDEO AUDIO WATERMARK
+# ---------------------------------------------------------
+
+def _string_to_binary(text: str) -> str:
+    """Chuyển string sang chuỗi bit (ví dụ 'A' -> '01000001')."""
+    return ''.join(format(ord(c), '08b') for c in text)
+
+def _generate_ultrasound_wav(creator_id: str, output_wav_path: str):
+    """
+    Sinh ra file âm thanh WAV chứa sóng mã hóa creator_id.
+    Kỹ thuật: On-Off Keying (OOK) ở tần số 8kHz (an toàn qua AAC).
+    Lý do chọn 8kHz: AAC giữ tốt dải 0-8kHz, 18kHz bị cắt mạnh bởi psychoacoustic model.
+    """
+    freq = 8000.0  # 8kHz — an toàn qua AAC 192k
+    sample_rate = 44100
+    bit_duration = 0.05  # 20 bits per second
+    
+    # Thêm header '10101010' để dễ nhận diện lúc decode
+    binary_str = "10101010" + _string_to_binary(creator_id)
+    
+    t = np.linspace(0, bit_duration, int(sample_rate * bit_duration), endpoint=False)
+    
+    audio_data = []
+    for bit in binary_str:
+        if bit == '1':
+            wave = np.sin(2 * np.pi * freq * t)
+        else:
+            wave = np.zeros_like(t)
+        audio_data.append(wave)
+        
+    audio_signal = np.concatenate(audio_data)
+    
+    # Giảm âm lượng xuống còn 1% (0.01) để tiếng bíp cực kỳ nhỏ, không gây chói tai
+    audio_signal = np.int16(audio_signal * 32767 * 0.01)
+    
+    wavfile.write(output_wav_path, sample_rate, audio_signal)
+
+
+def embed_video_audio_watermark(video_bytes: bytes, creator_id: str) -> bytes:
+    """
+    Trộn sóng siêu âm chứa ID vào luồng âm thanh của Video gốc.
+    """
+    tmp_video_in = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_audio_wm = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp_video_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+             
+    tmp_video_in.write(video_bytes)
+    
+    # Đóng file handle trên Windows để FFmpeg không bị lỗi Permission (WinError 32)
+    tmp_video_in.close()
+    tmp_audio_wm.close()
+    tmp_video_out.close()
+        
+    try:
+        import json
+        
+        # 1. Kiểm tra xem video gốc có luồng audio hay không và lấy thời lượng
+        probe_cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", "-show_format", tmp_video_in.name
+        ]
+        probe_res = subprocess.run(probe_cmd, capture_output=True, text=True)
+        has_audio = False
+        video_duration = None
+        if probe_res.stdout:
+            try:
+                info = json.loads(probe_res.stdout)
+                has_audio = any(s.get("codec_type") == "audio" for s in info.get("streams", []))
+                video_duration = info.get("format", {}).get("duration")
+            except json.JSONDecodeError:
+                pass
+                
+        # 2. Sinh file WAV siêu âm chứa creator_id
+        _generate_ultrasound_wav(creator_id, tmp_audio_wm.name)
+        
+        # 3. Dùng FFmpeg ghép audio
+        cmd = ["ffmpeg", "-y", "-i", tmp_video_in.name, "-i", tmp_audio_wm.name]
+        
+        if has_audio:
+            # Trộn 2 tiếng, độ dài bằng file video đầu vào
+            cmd.extend([
+                "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first[a]",
+                "-map", "0:v", "-map", "[a]",
+                # Bitrate 192k + không đặt -cutoff — để codec tự quyết giữ tần số nào
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"
+            ])
+        else:
+            # Nếu video không có tiếng gốc: pad silence cho audio watermark để kéo dài hết video
+            cmd.extend([
+                "-filter_complex", "[1:a]apad[a]",
+                "-map", "0:v", "-map", "[a]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest"
+            ])
+            
+        cmd.extend(["-loglevel", "error", tmp_video_out.name])
+        
+        result = subprocess.run(cmd, capture_output=True, timeout=60)
+        if result.returncode != 0:
+            error_msg = result.stderr.decode("utf-8", errors="replace") if hasattr(result.stderr, 'decode') else str(result.stderr)
+            logger.error(f"FFmpeg error: {error_msg}")
+            raise RuntimeError(f"FFmpeg audio mixing failed: {error_msg[:200]}")
+            
+        with open(tmp_video_out.name, "rb") as f:
+            out_bytes = f.read()
+        return out_bytes
+            
+    except FileNotFoundError:
+        raise ValueError("Lỗi: Không tìm thấy phần mềm FFmpeg trên máy chủ. Vui lòng cài đặt FFmpeg và thêm vào biến môi trường PATH.")
+    except Exception as e:
+        logger.error(f"Lỗi khi nhúng audio watermark cho video: {e}")
+        raise e
+    finally:
+        if os.path.exists(tmp_video_in.name): os.remove(tmp_video_in.name)
+        if os.path.exists(tmp_audio_wm.name): os.remove(tmp_audio_wm.name)
+        if os.path.exists(tmp_video_out.name): os.remove(tmp_video_out.name)
+
+def _get_ffmpeg_path():
+    """Lấy đường dẫn FFmpeg, fallback về thư mục Desktop nếu không có trong PATH."""
+    import shutil
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+    desktop_ffmpeg = r"C:\Users\ttinh\Desktop\ffmpeg-2026-06-08-git-6028720d70-full_build\bin\ffmpeg.exe"
+    if os.path.exists(desktop_ffmpeg):
+        return desktop_ffmpeg
+    return "ffmpeg"
+
+def embed_ab_watermark_hls(video_bytes: bytes, output_dir: str):
+    """
+    Tạo đồng thời 2 phiên bản HLS A và B từ video gốc trong 1 lần decode duy nhất.
+    Version A: Có đóng dấu (Marker Pattern A ở góc trên phải)
+    Version B: Không đóng dấu (Clean)
+    """
+    tmp_video_in = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_video_in.write(video_bytes)
+    tmp_video_in.close()
+
+    dir_a = os.path.join(output_dir, "version_A")
+    dir_b = os.path.join(output_dir, "version_B")
+    os.makedirs(dir_a, exist_ok=True)
+    os.makedirs(dir_b, exist_ok=True)
+
+    ffmpeg_bin = _get_ffmpeg_path()
+    
+    try:
+        # Pass 1: Tạo Version A (Có watermark marker magenta ở góc trên phải)
+        cmd_a = [
+            ffmpeg_bin, "-y", "-i", tmp_video_in.name,
+            "-vf", "drawbox=x=iw-20:y=20:w=8:h=8:color=magenta@1.0:t=fill",
+            "-c:v", "libx264", "-preset", "veryfast",
+            "-force_key_frames", "expr:gte(t,n_forced*2)",
+            "-g", "60", "-sc_threshold", "0",
+            "-c:a", "aac", "-b:a", "128k",
+            "-hls_time", "2", "-hls_playlist_type", "vod",
+            "-hls_list_size", "0",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_filename", os.path.join(dir_a, "chunk_%05d.ts"),
+            "-f", "hls", os.path.join(dir_a, "playlist.m3u8"),
+        ]
+
+        # Pass 2: Tạo Version B (Bản Clean)
+        cmd_b = [
+            ffmpeg_bin, "-y", "-i", tmp_video_in.name,
+            "-c:v", "libx264", "-preset", "veryfast",
+            "-force_key_frames", "expr:gte(t,n_forced*2)",
+            "-g", "60", "-sc_threshold", "0",
+            "-c:a", "aac", "-b:a", "128k",
+            "-hls_time", "2", "-hls_playlist_type", "vod",
+            "-hls_list_size", "0",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_filename", os.path.join(dir_b, "chunk_%05d.ts"),
+            "-f", "hls", os.path.join(dir_b, "playlist.m3u8"),
+        ]
+
+        # Chạy song song (Parallel) cả 2 tiến trình FFmpeg A và B cùng một lúc
+        import concurrent.futures
+
+        def _run_ffmpeg_task(cmd, version_name):
+            logger.info(f"Đang encode {version_name} HLS song song...")
+            res = subprocess.run(cmd, capture_output=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpeg {version_name} failed: {res.stderr.decode('utf-8', errors='replace')}")
+            return res
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_a = executor.submit(_run_ffmpeg_task, cmd_a, "Version A")
+            future_b = executor.submit(_run_ffmpeg_task, cmd_b, "Version B")
+            future_a.result()
+            future_b.result()
+            
+    except Exception as e:
+        logger.error(f"Lỗi khi chạy A/B HLS: {e}")
+        raise e
+    finally:
+        if os.path.exists(tmp_video_in.name): 
+            os.remove(tmp_video_in.name)
+
+def _binary_to_string(binary_str: str) -> str:
+    """Chuyển chuỗi bit sang string (ví dụ '01000001' -> 'A')."""
+    chars = []
+    for i in range(0, len(binary_str), 8):
+        byte = binary_str[i:i+8]
+        if len(byte) == 8:
+            chars.append(chr(int(byte, 2)))
+    return ''.join(chars)
+
+def _extract_ook_from_audio(audio_data: np.ndarray, sample_rate: int, freq_target: float, bit_duration: float) -> str:
+    """Phân tích OOK từ mảng audio theo tần số và độ dài bit."""
+    chunk_size = int(sample_rate * bit_duration)
+    best_data_bits = None
+    
+    for phase in range(10):
+        offset = int((phase / 10.0) * chunk_size)
+        if offset + chunk_size > len(audio_data):
+            break
+            
+        audio_shifted = audio_data[offset:]
+        num_chunks = len(audio_shifted) // chunk_size
+        powers = []
+        
+        # Chỉ phân tích 18 giây đầu tiên (360 chunks * 0.05s = 18s) vì watermark UUID dài tối đa 15s.
+        # Nếu phân tích cả video dài, lượng chunk '0' sẽ áp đảo và làm sai lệch threshold.
+        max_chunks = min(num_chunks, 360)
+        
+        for i in range(max_chunks):
+            chunk = audio_shifted[i*chunk_size : (i+1)*chunk_size]
+            fft_result = np.fft.rfft(chunk)
+            freqs = np.fft.rfftfreq(chunk_size, 1.0/sample_rate)
+            
+            idx_freq = np.argmin(np.abs(freqs - freq_target))
+            # Mở rộng dải lấy mẫu xung quanh đỉnh 8kHz để thu được nhiều năng lượng hơn khi volume nhỏ
+            power = np.sum(np.abs(fft_result[max(0, idx_freq-3) : min(len(fft_result), idx_freq+4)])**2)
+            powers.append(power)
+            
+        if not powers:
+            continue
+            
+        # Vì ta chỉ lấy 18s đầu tiên (chứa trọn UUID), tỉ lệ bit '0' và '1' là xấp xỉ 50/50.
+        # Do đó threshold hoàn hảo nhất chính là Mean hoặc Median của mảng, thay vì Mean + 2*Std.
+        powers_arr = np.array(powers)
+        threshold = np.mean(powers_arr)
+        
+        # Nếu nhiễu quá thấp, thiết lập một ngưỡng tối thiểu
+        if threshold < 1e-6:
+            threshold = 1e-6
+            
+        binary_sequence = "".join(["1" if p > threshold else "0" for p in powers])
+
+        
+        header = "10101010"
+        header_idx = binary_sequence.find(header)
+        
+        if header_idx != -1:
+            best_data_bits = binary_sequence[header_idx + len(header):]
+            break
+    
+    if best_data_bits is None:
+        return None
+        
+    extracted_str = _binary_to_string(best_data_bits)
+    # Chỉ giữ ký tự in được ASCII (chữ + số + dấu phổ biến) — loại nhiễu ký tự đặc biệt
+    clean_id = ''.join(c for c in extracted_str if 32 <= ord(c) <= 126)
+    # Nếu kết quả trông không giống UUID (quá nhiều ký tự đặc biệt so với alpha+digit),
+    # coi như thất bại — trả None tránh gây nhầm lẫn
+    alphanum = sum(c.isalnum() or c == '-' for c in clean_id)
+    if len(clean_id) == 0 or (alphanum / len(clean_id)) < 0.6:
+        logger.warning(f"OOK extract: kết quả nhiễu quá (alphanum ratio={alphanum/len(clean_id) if clean_id else 0:.2f}), bỏ qua")
+        return None
+    return clean_id
+
+def extract_ab_watermark_hls(video_bytes: bytes) -> dict:
+    """
+    Trích xuất Viewer ID từ một đoạn video bị quay lén (đã áp dụng A/B Watermarking).
+    Thuật toán:
+    1. Trích xuất 1 frame mỗi 4 giây bằng FFmpeg (1 lệnh duy nhất cho lẹ).
+    2. Dùng OCR (PyTesseract) quét tối đa 32 frames đầu tiên (để tránh timeout).
+    3. Gom kết quả quét thành chuỗi nhị phân (Ví dụ: 10101).
+    4. Giải mã chuỗi nhị phân thành ViewerID gốc.
+    """
+    import pytesseract
+    import platform
+    if platform.system() == "Windows":
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    
+    from PIL import Image
+    import cv2
+    import math
+    import glob
+
+    tmp_video_in = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_video_in.write(video_bytes)
+    tmp_video_in.close()
+    
+    tmp_dir = tempfile.mkdtemp()
+    ffmpeg_bin = _get_ffmpeg_path()
+    
+    binary_str = ""
+    try:
+        # 1. Trích xuất frames: 1 frame mỗi 2 giây (fps=1/2) để khớp SEGMENT_DURATION = 2s
+        cmd = [
+            ffmpeg_bin, "-y", "-i", tmp_video_in.name,
+            "-vf", "fps=1/2", "-q:v", "2",
+            os.path.join(tmp_dir, "frame_%04d.jpg")
+        ]
+        subprocess.run(cmd, capture_output=True)
+        
+        # Lấy danh sách các frame đã xuất (sắp xếp theo thời gian)
+        frames = sorted(glob.glob(os.path.join(tmp_dir, "frame_*.jpg")))
+        
+        # Quét tối đa 64 frames (tương đương 64 bits = 128 giây) để bao phủ đầy đủ chuỗi nhị phân
+        frames_to_scan = frames[:64]
+        
+        if not frames_to_scan:
+            return {"creator_id": None, "viewer_id": None}
+            
+        for frame_path in frames_to_scan:
+            img = cv2.imread(frame_path)
+            if img is None:
+                binary_str += "0"
+                continue
+
+            # Thay vì dò đúng 1 toạ độ cố định (dễ bị trượt nếu video quay lén bị thêm viền đen,
+            # bị crop hoặc resize), ta quét toàn bộ góc trên bên phải (20% diện tích).
+            h, w = img.shape[:2]
+            y_start, y_end = 0, h // 5
+            x_start, x_end = int(w * 0.8), w
+
+            roi = img[y_start:y_end, x_start:x_end]  # BGR
+            if roi.size == 0:
+                binary_str += "0"
+                continue
+
+            # Tìm màu Magenta (Hồng cánh sen: R và B cao, G thấp) — màu này cực hiếm trong tự nhiên/anime.
+            # Lưu ý: Nén video (HLS/YUV420) làm bợt màu rất mạnh, nên ngưỡng không được quá khắt khe
+            r_channel = roi[:, :, 2]  # OpenCV: BGR → index 2 = R
+            g_channel = roi[:, :, 1]
+            b_channel = roi[:, :, 0]
+
+            magenta_pixels = int(((r_channel > 150) & (b_channel > 150) & (g_channel < 120)).sum())
+
+            # Chỉ cần tìm thấy > 5 pixel magenta (để chống chịu với nén/resize/crop quay lén) -> Version A
+            if magenta_pixels > 5:
+                binary_str += "1"
+                logger.debug(f"Frame {frame_path}: found {magenta_pixels} magenta pixels → bit=1")
+            else:
+                binary_str += "0"
+                logger.debug(f"Frame {frame_path}: found {magenta_pixels} magenta pixels → bit=0")
+                
+        # Giả lập: Lấy ra Viewer ID từ chuỗi bit thu được
+        viewer_id = None
+        if "1" in binary_str:
+            viewer_id = f"User_Binary_{binary_str}"
+            
+        # 1. Lấy Creator ID từ Audio Watermark (sóng siêu âm)
+        creator_id_audio = None
+        try:
+            audio_extracted = extract_video_audio_watermark(video_bytes)
+            creator_id_audio = audio_extracted.get("creator_id")
+        except Exception as e:
+            logger.warning(f"Không thể trích xuất audio watermark: {e}")
+
+        # 2. Lấy Creator ID từ Video Fingerprint (Milvus)
+        creator_id_fingerprint = None
+        try:
+            from app.fingerprint.extractor import extract_frames_from_video
+            from app.fingerprint.hasher import hash_frames
+            from app.fingerprint.content_ownership import resolve_content_cluster
+
+            frames = extract_frames_from_video(video_bytes)
+            if frames:
+                fingerprints = hash_frames(frames)
+                if fingerprints:
+                    vectors = [fp["vector"] for fp in fingerprints]
+                    cluster = resolve_content_cluster(vectors, creator_id="", is_video=True)
+                    if cluster.matched:
+                        creator_id_fingerprint = cluster.original_creator_id
+                        logger.info(f"Video Fingerprint Fallback thành công! Creator ID = {creator_id_fingerprint}")
+        except Exception as e:
+            logger.error(f"Lỗi khi chạy Video Fingerprint Fallback: {e}")
+
+        return {
+            "creator_id_audio": creator_id_audio, 
+            "creator_id_fingerprint": creator_id_fingerprint, 
+            "viewer_id": viewer_id
+        }        
+    except Exception as e:
+        logger.error(f"Lỗi khi trích xuất A/B HLS: {e}")
+        return {"creator_id_audio": None, "creator_id_fingerprint": None, "viewer_id": None}
+    finally:
+        if os.path.exists(tmp_video_in.name): 
+            os.remove(tmp_video_in.name)
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+def extract_video_audio_watermark(video_bytes: bytes) -> dict:
+    """
+    Trích xuất ID từ âm thanh siêu âm của Video bằng FFT.
+    Trả về dict chứa creator_id (18kHz) và viewer_id (20kHz).
+    """
+    tmp_video_in = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_audio_out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+             
+    tmp_video_in.write(video_bytes)
+    
+    # Đóng file handle trên Windows
+    tmp_video_in.close()
+    tmp_audio_out.close()
+        
+    try:
+        # 1. Dùng FFmpeg để tách audio ra thành file WAV mono 44.1kHz
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", tmp_video_in.name,
+            "-vn",            # No video
+            "-ac", "1",       # Mono
+            "-ar", "44100",   # Sample rate 44.1kHz
+            "-acodec", "pcm_s16le", # 16-bit PCM
+            "-loglevel", "error",
+            tmp_audio_out.name
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=60, check=True)
+        
+        # 2. Đọc file âm thanh
+        sample_rate, audio_data = wavfile.read(tmp_audio_out.name)
+        
+        if len(audio_data) == 0:
+            raise ValueError("Không tìm thấy luồng âm thanh trong video")
+            
+        # Đảm bảo audio_data là mảng 1D
+        if len(audio_data.shape) > 1:
+            audio_data = audio_data.mean(axis=1)
+            
+        # 3. Phân tích OOK ở 8kHz (Creator, 0.05s) - đã update để qua màng lọc AAC
+        creator_id = _extract_ook_from_audio(audio_data, sample_rate, 8000.0, 0.05)
+        viewer_id = None # Viewer ID đã chuyển qua video A/B HLS
+        
+        if not creator_id and not viewer_id:
+            raise ValueError("Không tìm thấy tín hiệu watermark nào trong video (Không thấy header)")
+            
+        return {
+            "creator_id": creator_id,
+            "viewer_id": viewer_id
+        }
+        
+    except FileNotFoundError:
+        logger.error("Lỗi: Không tìm thấy FFmpeg trên máy chủ.")
+        raise ValueError("Lỗi: Không tìm thấy phần mềm FFmpeg trên máy chủ. Vui lòng cài đặt FFmpeg và thêm vào biến môi trường PATH.")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Lỗi FFmpeg khi trích xuất audio: {e}")
+        raise RuntimeError("Lỗi khi tách âm thanh từ video")
+    except Exception as e:
+        logger.error(f"Lỗi khi giải mã audio watermark: {e}")
+        raise e
+    finally:
+        if os.path.exists(tmp_video_in.name): os.remove(tmp_video_in.name)
+        if os.path.exists(tmp_audio_out.name): os.remove(tmp_audio_out.name)

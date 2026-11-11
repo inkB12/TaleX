@@ -1,0 +1,923 @@
+"use client";
+
+import { useState, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Eye, FileText, Filter, RefreshCw, Search } from "lucide-react";
+import { toast } from "sonner";
+
+import {
+  adminVerificationKeys,
+  getCreatorIdentities,
+  getCreatorIdentityById,
+  getPaymentProfiles,
+  updateIdentityVerification,
+  updatePaymentVerification,
+  type CreatorIdentityRecord,
+  type IdentityVerificationStatus,
+  type PaymentProfileRecord,
+  type PaymentVerificationStatus,
+} from "@/features/admin/api/admin-creator-verification-api";
+import { Button } from "@/shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
+import { cn } from "@/shared/utils/utils";
+
+const identityStatusLabels: Record<IdentityVerificationStatus, string> = {
+  PENDING: "Chờ xử lý",
+  IN_PROGRESS: "Đang xử lý",
+  APPROVED: "Đã duyệt",
+  REJECTED: "Từ chối",
+};
+
+const paymentStatusLabels: Record<PaymentVerificationStatus, string> = {
+  PENDING: "Chờ duyệt",
+  VERIFIED: "Đã duyệt",
+  REJECTED: "Từ chối",
+  CANCELLED: "Đã hủy",
+};
+
+const statusClassNames: Record<
+  IdentityVerificationStatus | PaymentVerificationStatus,
+  string
+> = {
+  PENDING: "border-amber-200 bg-amber-50 text-amber-700",
+  IN_PROGRESS: "border-blue-200 bg-blue-50 text-blue-700",
+  APPROVED: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  VERIFIED: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  REJECTED: "border-red-200 bg-red-50 text-red-700",
+  CANCELLED: "border-gray-200 bg-gray-100 text-gray-600",
+};
+
+const ERROR_MESSAGE = "Đã có lỗi xảy ra. Vui lòng thử lại sau.";
+
+type IdentitySubmitInput = {
+  id: string;
+  status: Extract<IdentityVerificationStatus, "APPROVED" | "REJECTED">;
+  verifiedNote: string;
+};
+
+type PaymentSubmitInput = {
+  id: string;
+  status: Extract<PaymentVerificationStatus, "VERIFIED" | "REJECTED">;
+  verifiedNote: string;
+};
+
+export default function AdminCreatorVerificationPage() {
+  const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab") || "tax";
+  const tab: "tax" | "payment" =
+    requestedTab === "payment" ? "payment" : "tax";
+  const pageTitle =
+    tab === "payment"
+      ? "Hồ Sơ Thanh toán"
+      : "Hồ Sơ Thuế";
+  const [selectedIdentity, setSelectedIdentity] =
+    useState<CreatorIdentityRecord | null>(null);
+  const [viewingIdentityId, setViewingIdentityId] = useState<string | null>(null);
+  const [selectedPaymentProfile, setSelectedPaymentProfile] =
+    useState<PaymentProfileRecord | null>(null);
+  const [identityVerifiedNote, setIdentityVerifiedNote] = useState("");
+  const [paymentVerifiedNote, setPaymentVerifiedNote] = useState("");
+  const [paymentResultStatus, setPaymentResultStatus] =
+    useState<Extract<PaymentVerificationStatus, "VERIFIED" | "REJECTED">>(
+      "VERIFIED",
+    );
+
+  // Pagination & Filter state for tax profiles
+  const [taxPage, setTaxPage] = useState(1);
+  const taxPageSize = 10;
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+
+  const queryParams = useMemo(() => {
+    const params: Record<string, unknown> = {
+      page: taxPage,
+      pageSize: taxPageSize,
+    };
+    if (statusFilter !== "ALL") {
+      params.statuses = statusFilter;
+    }
+    if (searchTerm.trim()) {
+      params["criteria[taxId]"] = searchTerm.trim();
+    }
+    return params;
+  }, [taxPage, taxPageSize, statusFilter, searchTerm]);
+
+  const identitiesQuery = useQuery({
+    queryKey: adminVerificationKeys.identities(queryParams),
+    queryFn: () => getCreatorIdentities(queryParams),
+  });
+
+  const identityDetailQuery = useQuery({
+    queryKey: adminVerificationKeys.identityDetail(viewingIdentityId ?? ""),
+    queryFn: () => getCreatorIdentityById(viewingIdentityId!),
+    enabled: Boolean(viewingIdentityId),
+  });
+
+  const paymentProfilesQuery = useQuery({
+    queryKey: adminVerificationKeys.paymentProfiles(),
+    queryFn: () => getPaymentProfiles(),
+  });
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSearchTerm(searchDraft);
+    setTaxPage(1);
+  };
+
+  const handleStatusFilterChange = (newStatus: string) => {
+    setStatusFilter(newStatus);
+    setTaxPage(1);
+  };
+
+  const invalidateIdentities = () => {
+    void queryClient.invalidateQueries({
+      queryKey: adminVerificationKeys.identities(),
+    });
+  };
+
+  const invalidatePaymentProfiles = () => {
+    void queryClient.invalidateQueries({
+      queryKey: adminVerificationKeys.paymentProfiles(),
+    });
+  };
+
+  const lockIdentityMutation = useMutation({
+    mutationFn: (record: CreatorIdentityRecord) =>
+      updateIdentityVerification(record.id, {
+        status: "IN_PROGRESS",
+        verifiedNote: "",
+      }),
+    onSuccess: (_data, record) => {
+      const lockedRecord: CreatorIdentityRecord = {
+        ...record,
+        status: "IN_PROGRESS",
+      };
+
+      setSelectedIdentity(lockedRecord);
+      setIdentityVerifiedNote(record.verifiedNote ?? "");
+      toast.success("Đã khóa hồ sơ thuế để xử lý.");
+      invalidateIdentities();
+    },
+    onError: () => {
+      toast.error(ERROR_MESSAGE);
+    },
+  });
+
+  const submitIdentityMutation = useMutation({
+    mutationFn: ({ id, status, verifiedNote }: IdentitySubmitInput) =>
+      updateIdentityVerification(id, {
+        status,
+        verifiedNote,
+      }),
+    onSuccess: () => {
+      setSelectedIdentity(null);
+      setIdentityVerifiedNote("");
+      toast.success("Đã cập nhật kết quả kiểm duyệt hồ sơ thuế.");
+      invalidateIdentities();
+    },
+    onError: () => {
+      toast.error(ERROR_MESSAGE);
+    },
+  });
+
+  const submitPaymentMutation = useMutation({
+    mutationFn: ({ id, status, verifiedNote }: PaymentSubmitInput) =>
+      updatePaymentVerification(id, {
+        status,
+        verifiedNote,
+      }),
+    onSuccess: () => {
+      setSelectedPaymentProfile(null);
+      setPaymentVerifiedNote("");
+      setPaymentResultStatus("VERIFIED");
+      toast.success("Đã cập nhật kết quả kiểm duyệt hồ sơ thanh toán.");
+      invalidatePaymentProfiles();
+    },
+    onError: () => {
+      toast.error(ERROR_MESSAGE);
+    },
+  });
+
+  const handleStartIdentityVerification = (record: CreatorIdentityRecord) => {
+    if (lockIdentityMutation.isPending || submitIdentityMutation.isPending) {
+      return;
+    }
+
+    lockIdentityMutation.mutate(record);
+  };
+
+  const handleContinueIdentityVerification = (
+    record: CreatorIdentityRecord,
+  ) => {
+    setSelectedIdentity(record);
+    setIdentityVerifiedNote(record.verifiedNote ?? "");
+  };
+
+  const handleSubmitIdentityVerification = (
+    status: Extract<IdentityVerificationStatus, "APPROVED" | "REJECTED">,
+  ) => {
+    if (
+      !selectedIdentity ||
+      submitIdentityMutation.isPending ||
+      !identityVerifiedNote.trim()
+    ) {
+      return;
+    }
+
+    submitIdentityMutation.mutate({
+      id: selectedIdentity.id,
+      status,
+      verifiedNote: identityVerifiedNote.trim(),
+    });
+  };
+
+  const handleOpenPaymentVerification = (record: PaymentProfileRecord) => {
+    setSelectedPaymentProfile(record);
+    setPaymentVerifiedNote(record.verifiedNote ?? "");
+    setPaymentResultStatus("VERIFIED");
+  };
+
+  const handleSubmitPaymentVerification = () => {
+    if (
+      !selectedPaymentProfile ||
+      submitPaymentMutation.isPending ||
+      !paymentVerifiedNote.trim()
+    ) {
+      return;
+    }
+
+    submitPaymentMutation.mutate({
+      id: selectedPaymentProfile.id,
+      status: paymentResultStatus,
+      verifiedNote: paymentVerifiedNote.trim(),
+    });
+  };
+
+  const activeQuery = tab === "tax" ? identitiesQuery : paymentProfilesQuery;
+  const isIdentitySubmitting =
+    lockIdentityMutation.isPending || submitIdentityMutation.isPending;
+  const isPaymentSubmitting = submitPaymentMutation.isPending;
+
+function removeVietnameseTones(str: string): string {
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "d")
+    .toLowerCase()
+    .trim();
+}
+
+  const taxPageData = identitiesQuery.data;
+  const displayTaxRecords = useMemo(() => {
+    if (!taxPageData) return [];
+    if (!searchTerm.trim()) return taxPageData.content;
+    const rawTerm = searchTerm.toLowerCase().trim();
+    const normTerm = removeVietnameseTones(searchTerm);
+
+    return taxPageData.content.filter((r) => {
+      const nameRaw = (r.accountName || "").toLowerCase();
+      const nameNorm = removeVietnameseTones(r.accountName || "");
+      const taxIdRaw = (r.taxId || "").toLowerCase();
+      const idRaw = (r.id || "").toLowerCase();
+
+      return (
+        nameRaw.includes(rawTerm) ||
+        nameNorm.includes(normTerm) ||
+        taxIdRaw.includes(rawTerm) ||
+        idRaw.includes(rawTerm)
+      );
+    });
+  }, [taxPageData, searchTerm]);
+
+  return (
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950 backoffice-dark:text-white">
+            {pageTitle}
+          </h1>
+        </div>
+        {tab === "tax" && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void identitiesQuery.refetch()}
+            disabled={identitiesQuery.isFetching}
+            className="border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] backoffice-dark:text-white/70 backoffice-dark:hover:bg-white/10"
+          >
+            <RefreshCw
+              className={
+                identitiesQuery.isFetching ? "mr-2 h-4 w-4 animate-spin" : "mr-2 h-4 w-4"
+              }
+            />
+            Làm mới
+          </Button>
+        )}
+      </div>
+
+      {tab === "tax" && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+          <form
+            onSubmit={handleSearchSubmit}
+            className="grid gap-3 sm:grid-cols-[minmax(240px,1fr)_200px_auto] sm:items-end"
+          >
+            <label className="relative block">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500 backoffice-dark:text-white/45">
+                Tìm kiếm
+              </span>
+              <Search className="absolute bottom-3 left-3 h-4 w-4 text-gray-400" />
+              <input
+                type="search"
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                placeholder="Mã số thuế, tên Creator, id..."
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 backoffice-dark:border-white/10 backoffice-dark:bg-black/30 backoffice-dark:text-white"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500 backoffice-dark:text-white/45">
+                Trạng thái
+              </span>
+              <select
+                value={statusFilter}
+                onChange={(e) => handleStatusFilterChange(e.target.value)}
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100 backoffice-dark:border-white/10 backoffice-dark:bg-black/30 backoffice-dark:text-white"
+              >
+                <option value="ALL">Tất cả trạng thái</option>
+                <option value="PENDING">Chờ xử lý</option>
+                <option value="IN_PROGRESS">Đang xử lý</option>
+                <option value="APPROVED">Đã duyệt</option>
+                <option value="REJECTED">Từ chối</option>
+              </select>
+            </label>
+
+            <div className="flex gap-2">
+              <Button
+                type="submit"
+                className="h-10 bg-violet-600 px-4 font-semibold text-white hover:bg-violet-700 backoffice-dark:bg-[var(--backoffice-primary)] backoffice-dark:text-black backoffice-dark:hover:bg-[var(--backoffice-primary-bright)]"
+              >
+                Tìm kiếm
+              </Button>
+              {searchTerm || statusFilter !== "ALL" ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setSearchDraft("");
+                    setSearchTerm("");
+                    setStatusFilter("ALL");
+                    setTaxPage(1);
+                  }}
+                  className="h-10 border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 hover:text-slate-900 backoffice-dark:border-white/10 backoffice-dark:bg-white/5 backoffice-dark:text-white backoffice-dark:hover:bg-white/10"
+                >
+                  Xóa lọc
+                </Button>
+              ) : null}
+            </div>
+          </form>
+        </section>
+      )}
+
+      <div className="flex flex-col gap-6">
+
+        {activeQuery.isLoading ? (
+          <div className="flex min-h-72 items-center justify-center rounded-xl border border-gray-200 bg-white backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+            <div className="flex items-center gap-3 text-sm font-medium text-gray-500">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-600/25 border-t-violet-600 backoffice-dark:border-[var(--backoffice-primary)]/25 backoffice-dark:border-t-[var(--backoffice-primary)]" />
+              Đang tải dữ liệu kiểm duyệt...
+            </div>
+          </div>
+        ) : null}
+
+        {activeQuery.isError ? (
+          <div className="flex min-h-72 items-center justify-center rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+            <div>
+              <p className="text-sm font-semibold text-red-700">
+                Không thể tải dữ liệu kiểm duyệt.
+              </p>
+              <Button
+                type="button"
+                onClick={() => void activeQuery.refetch()}
+                className="mt-4 h-9 bg-violet-600 px-4 font-semibold text-white hover:bg-violet-700 backoffice-dark:bg-[var(--backoffice-primary)] backoffice-dark:text-black backoffice-dark:hover:bg-[var(--backoffice-primary-bright)]"
+              >
+                Thử lại
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {!activeQuery.isLoading && !activeQuery.isError && tab === "tax" ? (
+          <IdentityTable
+            records={displayTaxRecords}
+            page={taxPageData?.pageNumber ?? taxPage}
+            pageSize={taxPageData?.pageSize ?? taxPageSize}
+            totalPages={taxPageData?.totalPages ?? 1}
+            totalElements={taxPageData?.totalElements ?? displayTaxRecords.length}
+            onPageChange={setTaxPage}
+            onViewDetail={(record) => setViewingIdentityId(record.id)}
+            onStartVerification={handleStartIdentityVerification}
+            onContinueVerification={handleContinueIdentityVerification}
+            isSubmitting={isIdentitySubmitting}
+          />
+        ) : null}
+
+        {!activeQuery.isLoading &&
+          !activeQuery.isError &&
+          tab === "payment" ? (
+          <PaymentProfileTable
+            records={paymentProfilesQuery.data ?? []}
+            onOpenVerification={handleOpenPaymentVerification}
+            isSubmitting={isPaymentSubmitting}
+          />
+        ) : null}
+      </div>
+
+      {/* Modal xem chi tiết Hồ sơ Thuế */}
+      <Dialog
+        open={Boolean(viewingIdentityId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewingIdentityId(null);
+          }
+        }}
+      >
+        <DialogContent className="gap-5 rounded-2xl border border-gray-200 bg-white p-6 text-gray-900 shadow-xl backoffice-dark:border-white/10 backoffice-dark:bg-[#121213] backoffice-dark:text-white sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 font-heading text-2xl font-bold tracking-tight text-gray-900 backoffice-dark:text-white">
+              <FileText className="h-6 w-6 text-violet-600 backoffice-dark:text-[var(--backoffice-primary)]" />
+              Chi tiết hồ sơ thuế
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-500 backoffice-dark:text-white/60">
+              Thông tin chi tiết định danh và thuế của Creator.
+            </DialogDescription>
+          </DialogHeader>
+
+          {identityDetailQuery.isLoading ? (
+            <div className="flex min-h-52 items-center justify-center">
+              <div className="flex items-center gap-3 text-sm font-medium text-gray-500">
+                <span className="h-5 w-5 animate-spin rounded-full border-2 border-violet-600/25 border-t-violet-600 backoffice-dark:border-[var(--backoffice-primary)]/25 backoffice-dark:border-t-[var(--backoffice-primary)]" />
+                Đang tải chi tiết hồ sơ...
+              </div>
+            </div>
+          ) : identityDetailQuery.data ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Tên tài khoản</p>
+                  <p className="mt-1 text-sm font-bold text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.accountName || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Họ và tên</p>
+                  <p className="mt-1 text-sm font-bold text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.fullName || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Mã số thuế</p>
+                  <p className="mt-1 font-mono text-sm font-bold text-violet-600 backoffice-dark:text-[var(--backoffice-primary)]">
+                    {identityDetailQuery.data.taxId || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Số CCCD / CMND</p>
+                  <p className="mt-1 font-mono text-sm font-bold text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.idNumber || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Ngày sinh</p>
+                  <p className="mt-1 text-sm font-medium text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.dob || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Giới tính</p>
+                  <p className="mt-1 text-sm font-medium text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.sex || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 sm:col-span-2 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Địa chỉ thường trú</p>
+                  <p className="mt-1 text-sm font-medium text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.address || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Ngày hết hạn CCCD</p>
+                  <p className="mt-1 text-sm font-medium text-gray-900 backoffice-dark:text-white">
+                    {identityDetailQuery.data.doe || "-"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3.5 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03]">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Trạng thái</p>
+                  <div className="mt-1">
+                    {identityDetailQuery.data.status ? (
+                      <StatusBadge
+                        label={identityStatusLabels[identityDetailQuery.data.status]}
+                        className={statusClassNames[identityDetailQuery.data.status]}
+                      />
+                    ) : (
+                      "-"
+                    )}
+                  </div>
+                </div>
+                {identityDetailQuery.data.verifiedNote ? (
+                  <div className="rounded-xl border border-amber-200/60 bg-amber-50/60 p-3.5 sm:col-span-2 backoffice-dark:border-amber-500/20 backoffice-dark:bg-amber-500/10">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-amber-700 backoffice-dark:text-amber-400">Ghi chú kiểm duyệt</p>
+                    <p className="mt-1 text-sm text-gray-800 backoffice-dark:text-white/90">
+                      {identityDetailQuery.data.verifiedNote}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <p className="text-center text-sm text-gray-400">Không có dữ liệu chi tiết.</p>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              type="button"
+              onClick={() => setViewingIdentityId(null)}
+              className="h-9 border border-gray-200 bg-gray-100 px-4 font-semibold text-gray-700 hover:bg-gray-200 backoffice-dark:border-white/10 backoffice-dark:bg-white/10 backoffice-dark:text-white backoffice-dark:hover:bg-white/20"
+            >
+              Đóng
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(selectedIdentity)}
+        onOpenChange={(open) => {
+          if (!open && !submitIdentityMutation.isPending) {
+            setSelectedIdentity(null);
+            setIdentityVerifiedNote("");
+          }
+        }}
+      >
+        <DialogContent className="gap-5 rounded-xl border border-gray-200 bg-white p-5 text-gray-900 shadow-xl backoffice-dark:border-white/10 backoffice-dark:bg-[#121213] backoffice-dark:text-white sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-2xl font-bold tracking-tight text-gray-900">
+              Xử lý hồ sơ thuế
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-6 text-gray-500">
+              Nhập ghi chú kiểm duyệt trước khi phê duyệt hoặc từ chối hồ sơ.
+            </DialogDescription>
+          </DialogHeader>
+
+          <textarea
+            value={identityVerifiedNote}
+            onChange={(event) => setIdentityVerifiedNote(event.target.value)}
+            placeholder="Ghi chú kiểm duyệt"
+            className="min-h-32 resize-none rounded-lg border border-gray-300 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-violet-500 focus:ring-4 focus:ring-violet-100 backoffice-dark:border-white/10 backoffice-dark:bg-black/30 backoffice-dark:text-white backoffice-dark:focus:ring-[rgba(212,175,55,0.16)]"
+          />
+
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              disabled={
+                submitIdentityMutation.isPending || !identityVerifiedNote.trim()
+              }
+              onClick={() => handleSubmitIdentityVerification("REJECTED")}
+              className="h-10 bg-red-500 px-5 font-semibold text-white hover:bg-red-500/85"
+            >
+              {submitIdentityMutation.isPending ? "Đang xử lý..." : "Từ chối"}
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                submitIdentityMutation.isPending || !identityVerifiedNote.trim()
+              }
+              onClick={() => handleSubmitIdentityVerification("APPROVED")}
+              className="h-10 bg-emerald-500 px-5 font-semibold text-white hover:bg-emerald-500/85"
+            >
+              {submitIdentityMutation.isPending ? "Đang xử lý..." : "Phê duyệt"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(selectedPaymentProfile)}
+        onOpenChange={(open) => {
+          if (!open && !submitPaymentMutation.isPending) {
+            setSelectedPaymentProfile(null);
+            setPaymentVerifiedNote("");
+            setPaymentResultStatus("VERIFIED");
+          }
+        }}
+      >
+        <DialogContent className="gap-5 rounded-xl border border-gray-200 bg-white p-5 text-gray-900 shadow-xl backoffice-dark:border-white/10 backoffice-dark:bg-[#121213] backoffice-dark:text-white sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-2xl font-bold tracking-tight text-gray-900">
+              Xử lý hồ sơ thanh toán
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-6 text-gray-500">
+              Chọn kết quả kiểm duyệt và ghi chú phản hồi cho Creator.
+            </DialogDescription>
+          </DialogHeader>
+
+          <textarea
+            value={paymentVerifiedNote}
+            onChange={(event) => setPaymentVerifiedNote(event.target.value)}
+            placeholder="Ghi chú kiểm duyệt"
+            className="min-h-32 resize-none rounded-lg border border-gray-300 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-violet-500 focus:ring-4 focus:ring-violet-100 backoffice-dark:border-white/10 backoffice-dark:bg-black/30 backoffice-dark:text-white backoffice-dark:focus:ring-[rgba(212,175,55,0.16)]"
+          />
+
+          <div className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 backoffice-dark:border-white/10 backoffice-dark:bg-black/25">
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-gray-700">
+              <input
+                type="radio"
+                name="payment-result-status"
+                checked={paymentResultStatus === "VERIFIED"}
+                onChange={() => setPaymentResultStatus("VERIFIED")}
+                className="h-4 w-4 accent-violet-600"
+              />
+              Phê duyệt
+            </label>
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-gray-700">
+              <input
+                type="radio"
+                name="payment-result-status"
+                checked={paymentResultStatus === "REJECTED"}
+                onChange={() => setPaymentResultStatus("REJECTED")}
+                className="h-4 w-4 accent-violet-600"
+              />
+              Từ chối
+            </label>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              disabled={
+                submitPaymentMutation.isPending || !paymentVerifiedNote.trim()
+              }
+              onClick={handleSubmitPaymentVerification}
+              className="h-10 bg-violet-600 px-5 font-semibold text-white hover:bg-violet-700 backoffice-dark:bg-[var(--backoffice-primary)] backoffice-dark:text-black backoffice-dark:hover:bg-[var(--backoffice-primary-bright)]"
+            >
+              {submitPaymentMutation.isPending
+                ? "Đang cập nhật..."
+                : "Cập nhật kết quả"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function IdentityTable({
+  records,
+  page,
+  pageSize,
+  totalPages,
+  totalElements,
+  onPageChange,
+  onViewDetail,
+  onStartVerification,
+  onContinueVerification,
+  isSubmitting,
+}: {
+  records: CreatorIdentityRecord[];
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  totalElements: number;
+  onPageChange: (page: number) => void;
+  onViewDetail: (record: CreatorIdentityRecord) => void;
+  onStartVerification: (record: CreatorIdentityRecord) => void;
+  onContinueVerification: (record: CreatorIdentityRecord) => void;
+  isSubmitting: boolean;
+}) {
+  const firstItem = totalElements === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastItem = Math.min(page * pageSize, totalElements);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+          <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
+            <tr>
+              <th className="px-4 py-3 font-semibold">Tên Tài Khoản</th>
+              <th className="px-4 py-3 font-semibold">Mã số thuế</th>
+              <th className="px-4 py-3 font-semibold">Trạng thái</th>
+              <th className="px-4 py-3 text-right font-semibold">Hành động</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {records.length ? (
+              records.map((record) => (
+                <tr
+                  key={record.id}
+                  className="text-gray-700 transition hover:bg-gray-50/70"
+                >
+                  <td className="px-4 py-4 font-semibold text-gray-900">
+                    {record.accountName}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-gray-700">
+                    {record.taxId}
+                  </td>
+                  <td className="px-4 py-4">
+                    <StatusBadge
+                      label={identityStatusLabels[record.status]}
+                      className={statusClassNames[record.status]}
+                    />
+                  </td>
+                  <td className="px-4 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        type="button"
+                        onClick={() => onViewDetail(record)}
+                        className="h-9 border border-gray-200 bg-gray-50 px-3 text-xs font-semibold text-gray-700 hover:bg-gray-100 hover:text-gray-900 backoffice-dark:border-white/10 backoffice-dark:bg-white/5 backoffice-dark:text-white/80 backoffice-dark:hover:bg-white/10"
+                      >
+                        <Eye className="mr-1.5 h-3.5 w-3.5" />
+                        Chi tiết
+                      </Button>
+                      {record.status === "PENDING" ? (
+                        <Button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => onStartVerification(record)}
+                          className="h-9 bg-violet-600 px-4 font-semibold text-white hover:bg-violet-700 backoffice-dark:bg-[var(--backoffice-primary)] backoffice-dark:text-black backoffice-dark:hover:bg-[var(--backoffice-primary-bright)]"
+                        >
+                          {isSubmitting ? "Đang xử lý..." : "Tiến hành xử lý"}
+                        </Button>
+                      ) : record.status === "IN_PROGRESS" ? (
+                        <Button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => onContinueVerification(record)}
+                          className="h-9 bg-blue-600 px-4 font-semibold text-white hover:bg-blue-700 backoffice-dark:bg-blue-600 backoffice-dark:text-white backoffice-dark:hover:bg-blue-500"
+                        >
+                          Tiếp tục xử lý
+                        </Button>
+                      ) : (
+                        <span className="text-xs font-medium text-gray-400">
+                          Không có thao tác
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="px-4 py-10 text-center text-sm font-medium text-gray-400"
+                >
+                  Chưa có hồ sơ thuế cần hiển thị.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totalElements > 0 && (
+        <div className="flex flex-col gap-3 border-t border-slate-100 bg-gray-50/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between backoffice-dark:border-white/10 backoffice-dark:bg-transparent">
+          <p className="text-sm font-semibold text-gray-500 backoffice-dark:text-zinc-400">
+            Hiển thị {firstItem} - {lastItem} / {totalElements} hồ sơ
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 hover:text-gray-900 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] backoffice-dark:text-zinc-200 backoffice-dark:hover:bg-white/10"
+              disabled={page <= 1}
+              onClick={() => onPageChange(page - 1)}
+            >
+              Trước
+            </Button>
+            <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-black text-gray-700 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] backoffice-dark:text-zinc-200">
+              {page} / {Math.max(totalPages, 1)}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 hover:text-gray-900 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] backoffice-dark:text-zinc-200 backoffice-dark:hover:bg-white/10"
+              disabled={page >= totalPages}
+              onClick={() => onPageChange(page + 1)}
+            >
+              Sau
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaymentProfileTable({
+  records,
+  onOpenVerification,
+  isSubmitting,
+}: {
+  records: PaymentProfileRecord[];
+  onOpenVerification: (record: PaymentProfileRecord) => void;
+  isSubmitting: boolean;
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+          <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
+            <tr>
+              <th className="px-4 py-3 font-semibold">Tên Tài Khoản</th>
+              <th className="px-4 py-3 font-semibold">Ngân hàng</th>
+              <th className="px-4 py-3 font-semibold">Số Tài Khoản</th>
+              <th className="px-4 py-3 font-semibold">Trạng thái</th>
+              <th className="px-4 py-3 text-right font-semibold">Hành động</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {records.length ? (
+              records.map((record) => (
+                <tr
+                  key={record.id}
+                  className="text-gray-700 transition hover:bg-gray-50/70"
+                >
+                  <td className="px-4 py-4 font-semibold text-gray-900">
+                    {record.accountName}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-gray-700">
+                    {record.bankCode}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-gray-700">
+                    {record.accountNumber}
+                  </td>
+                  <td className="px-4 py-4">
+                    <StatusBadge
+                      label={paymentStatusLabels[record.status]}
+                      className={statusClassNames[record.status]}
+                    />
+                  </td>
+                  <td className="px-4 py-4 text-right">
+                    {record.status === "PENDING" ? (
+                      <Button
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={() => onOpenVerification(record)}
+                        className="h-9 bg-violet-600 px-4 font-semibold text-white hover:bg-violet-700 backoffice-dark:bg-[var(--backoffice-primary)] backoffice-dark:text-black backoffice-dark:hover:bg-[var(--backoffice-primary-bright)]"
+                      >
+                        {isSubmitting ? "Đang xử lý..." : "Kiểm duyệt"}
+                      </Button>
+                    ) : (
+                      <span className="text-xs font-medium text-gray-400">
+                        Không có thao tác
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-4 py-10 text-center text-sm font-medium text-gray-400"
+                >
+                  Chưa có hồ sơ thanh toán cần hiển thị.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  );
+}
+
+function StatusBadge({
+  label,
+  className,
+}: {
+  label: string;
+  className: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex rounded-full border px-3 py-1 text-xs font-semibold",
+        className,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+

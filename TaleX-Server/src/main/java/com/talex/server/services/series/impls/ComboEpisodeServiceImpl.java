@@ -1,0 +1,199 @@
+package com.talex.server.services.series.impls;
+
+import com.talex.server.dtos.requests.series.ComboEpisodeRequestDto;
+import com.talex.server.dtos.responses.series.ComboEpisodeResponseDto;
+import com.talex.server.entities.series.ComboEpisode;
+import com.talex.server.entities.series.Episode;
+import com.talex.server.enums.series.EpisodeStatus;
+import com.talex.server.repositories.series.ComboEpisodeRepository;
+import com.talex.server.repositories.series.EpisodeRepository;
+import com.talex.server.services.series.ComboEpisodeService;
+import com.talex.server.services.media.impls.ContentOwnershipService;
+import com.talex.server.services.audit.ContentAuditLogger;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class ComboEpisodeServiceImpl implements ComboEpisodeService {
+
+    private final ComboEpisodeRepository comboEpisodeRepository;
+    private final EpisodeRepository episodeRepository;
+    private final ContentOwnershipService contentOwnershipService;
+    private final ContentAuditLogger contentAuditLogger;
+
+    @Override
+    @Transactional
+    public ComboEpisodeResponseDto create(ComboEpisodeRequestDto request, String accountId) {
+        ComboEpisode combo = new ComboEpisode();
+        combo.setTitle(request.getTitle());
+        combo.setDescription(request.getDescription());
+        combo.setPriceVnd(request.getPriceVnd());
+        combo.setStatus(request.getStatus() != null ? request.getStatus() : EpisodeStatus.DRAFT);
+        
+        String creatorId = contentOwnershipService.requireCurrentCreatorId(accountId);
+        combo.setCreatorId(creatorId);
+        
+        if (request.getEpisodeIds() != null && !request.getEpisodeIds().isEmpty()) {
+            List<Episode> episodes = fetchAndValidateEpisodes(request.getEpisodeIds(), accountId, request.getPriceVnd());
+            combo.setEpisodes(episodes);
+        } else if (request.getPriceVnd() != null && request.getPriceVnd() > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Combo price must be less than or equal to the total price of its episodes");
+        }
+        
+        combo = comboEpisodeRepository.save(combo);
+        contentAuditLogger.logAction("ComboEpisode", combo.getComboId(), "CREATE", accountId, creatorId);
+        return toResponse(combo);
+    }
+
+    @Override
+    public ComboEpisodeResponseDto getById(String id, String accountId) {
+        ComboEpisode combo = findActiveEntity(id);
+        contentOwnershipService.assertCanManage(combo, accountId);
+        return toResponse(combo);
+    }
+
+    @Override
+    public List<ComboEpisodeResponseDto> listByCreator(String accountId) {
+        String creatorId = contentOwnershipService.requireCurrentCreatorId(accountId);
+        return comboEpisodeRepository.findByCreatorIdAndIsDeletedFalse(creatorId)
+                .stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ComboEpisodeResponseDto> getAll() {
+        return comboEpisodeRepository.findByIsDeletedFalse().stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public ComboEpisodeResponseDto update(String id, ComboEpisodeRequestDto request, String accountId) {
+        ComboEpisode combo = findActiveEntity(id);
+        contentOwnershipService.assertCanManage(combo, accountId);
+        
+        combo.setTitle(request.getTitle());
+        combo.setDescription(request.getDescription());
+        combo.setPriceVnd(request.getPriceVnd());
+        if (request.getStatus() != null) {
+            combo.setStatus(request.getStatus());
+        }
+        
+        if (request.getEpisodeIds() != null) {
+            List<Episode> episodes = fetchAndValidateEpisodes(request.getEpisodeIds(), accountId, request.getPriceVnd());
+            combo.setEpisodes(episodes);
+        } else {
+            combo.getEpisodes().clear();
+            if (request.getPriceVnd() != null && request.getPriceVnd() > 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Combo price must be less than or equal to the total price of its episodes");
+            }
+        }
+        
+        combo = comboEpisodeRepository.save(combo);
+        contentAuditLogger.logAction("ComboEpisode", combo.getComboId(), "UPDATE", accountId, combo.getCreatorId());
+        return toResponse(combo);
+    }
+
+    @Override
+    @Transactional
+    public void delete(String id, String accountId) {
+        ComboEpisode combo = findActiveEntity(id);
+        contentOwnershipService.assertCanManage(combo, accountId);
+        combo.setIsDeleted(true);
+        combo.softDelete();
+        comboEpisodeRepository.save(combo);
+        contentAuditLogger.logAction("ComboEpisode", combo.getComboId(), "DELETE", accountId, combo.getCreatorId());
+    }
+
+    private ComboEpisode findActiveEntity(String id) {
+        ComboEpisode combo = comboEpisodeRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Combo not found"));
+        if (combo.getIsDeleted()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Combo not found");
+        }
+        return combo;
+    }
+
+    private List<Episode> fetchAndValidateEpisodes(List<String> episodeIds, String accountId, Long comboPrice) {
+        List<Episode> episodes = episodeRepository.findAllById(episodeIds);
+        if (episodes.size() != episodeIds.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Some episodes not found");
+        }
+        
+        String commonSeriesId = null;
+        long originalPrice = 0L;
+        for (Episode episode : episodes) {
+            contentOwnershipService.assertCanManage(episode, accountId);
+            
+            if (!EpisodeStatus.PUBLISHED.equals(episode.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Can only add published episodes to a combo");
+            }
+            
+            if (com.talex.server.enums.series.EpisodeUnlockType.FREE.equals(episode.getUnlockType())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add FREE episode to a combo");
+            }
+
+            originalPrice += (episode.getPriceVnd() != null ? episode.getPriceVnd() : 0L);
+            
+            if (episode.getSeason() != null && episode.getSeason().getSeries() != null) {
+                String seriesId = episode.getSeason().getSeries().getSeriesId();
+                if (commonSeriesId == null) {
+                    commonSeriesId = seriesId;
+                } else if (!commonSeriesId.equals(seriesId)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "All episodes in a combo must belong to the same series");
+                }
+            } else {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Episode " + episode.getEpisodeId() + " does not belong to a series");
+            }
+        }
+
+        if (comboPrice != null && comboPrice > originalPrice) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Combo price must be less than or equal to the total price of its episodes");
+        }
+        return episodes;
+    }
+
+    private ComboEpisodeResponseDto toResponse(ComboEpisode combo) {
+        long originalPrice = 0L;
+        List<ComboEpisodeResponseDto.EpisodeSummaryDto> summaryList = null;
+        if (combo.getEpisodes() != null) {
+            summaryList = combo.getEpisodes().stream().map(ep -> {
+                ComboEpisodeResponseDto.EpisodeSummaryDto summary = new ComboEpisodeResponseDto.EpisodeSummaryDto();
+                summary.setEpisodeId(ep.getEpisodeId());
+                summary.setTitle(ep.getTitle());
+                summary.setThumbnail(ep.getThumbnail());
+                summary.setEpisodeNumber(ep.getEpisodeNumber());
+                summary.setPriceVnd(ep.getPriceVnd());
+                if (ep.getSeason() != null) {
+                    summary.setSeasonId(ep.getSeason().getSeasonId());
+                    summary.setSeasonTitle(ep.getSeason().getTitle());
+                    if (ep.getSeason().getSeries() != null) {
+                        summary.setSeriesId(ep.getSeason().getSeries().getSeriesId());
+                        summary.setSeriesTitle(ep.getSeason().getSeries().getTitle());
+                    }
+                }
+                return summary;
+            }).collect(Collectors.toList());
+            
+            originalPrice = combo.getEpisodes().stream().mapToLong(ep -> ep.getPriceVnd() != null ? ep.getPriceVnd() : 0L).sum();
+        }
+
+        return ComboEpisodeResponseDto.builder()
+                .comboId(combo.getComboId())
+                .creatorId(combo.getCreatorId())
+                .title(combo.getTitle())
+                .description(combo.getDescription())
+                .status(combo.getStatus())
+                .priceVnd(combo.getPriceVnd())
+                .originalPriceVnd(originalPrice)
+                .episodes(summaryList)
+                .createdAt(combo.getCreatedAt())
+                .updatedAt(combo.getUpdatedAt())
+                .build();
+    }
+}

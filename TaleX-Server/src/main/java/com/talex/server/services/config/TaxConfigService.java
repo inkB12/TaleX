@@ -1,0 +1,12 @@
+package com.talex.server.services.config;
+
+import com.talex.server.dtos.requests.config.TaxConfigRequestDto;
+import com.talex.server.dtos.responses.config.TaxConfigResponseDto;
+import com.talex.server.entities.config.TaxConfig;
+
+public interface TaxConfigService {
+    TaxConfigResponseDto createTaxConfig(TaxConfigRequestDto dto);
+    TaxConfigResponseDto updateTaxConfig(TaxConfigRequestDto dto);
+    TaxConfigResponseDto getTaxConfigDto();
+    TaxConfig getTaxConfigEntity();
+}

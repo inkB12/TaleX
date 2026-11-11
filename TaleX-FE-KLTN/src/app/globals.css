@@ -1,0 +1,669 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+@custom-variant backoffice-dark (&:is(.backoffice-theme-dark *));
+
+/* 
+  BƯỚC 1: Khai báo giá trị màu thực tế ở root.
+  Ta thiết lập luôn hệ màu Cinematic Dark Mode làm mặc định.
+*/
+:root,
+.dark {
+  --background: #0a0a0a;
+  /* Đen Cinematic */
+  --foreground: #ffffff;
+
+  --primary: #d4af37;
+  /* Vàng Gold */
+  --primary-foreground: #000000;
+
+  --secondary: #a52a2a;
+  /* Đỏ Nâu */
+  --secondary-foreground: #ffffff;
+
+  --accent: #97b0ff;
+  /* Xanh Nhạt */
+  --accent-foreground: #000000;
+
+  --muted: #7c766b;
+  /* Xám Ấm */
+  --muted-foreground: #d1d1d1;
+
+  --card: #121212;
+  /* Sáng hơn nền để tạo khối */
+  --card-foreground: #ffffff;
+
+  --border: #2a2a2a;
+  --ring: #d4af37;
+
+  --radius: 0.625rem;
+
+  /* Creator Dashboard Specific Colors */
+  --creator-gold: #e2b13c;
+  --creator-gold-hover: #f3c75c;
+  --creator-bg: #13110f;
+  --creator-sidebar: #090807;
+  --creator-card: #181614;
+  --creator-card-hover: #1e1b18;
+  --creator-border: #2a2622;
+  --creator-text: #f3f4f6;
+  --creator-muted: #858079;
+}
+
+/* 
+  BƯỚC 2: Đăng ký các biến trên vào hệ thống Theme của Tailwind v4.
+  Điều này cho phép dùng các class như bg-background, text-primary...
+*/
+@theme {
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  /* Creator Dashboard */
+  --color-creator-gold: var(--creator-gold);
+  --color-creator-gold-hover: var(--creator-gold-hover);
+  --color-creator-bg: var(--creator-bg);
+  --color-creator-sidebar: var(--creator-sidebar);
+  --color-creator-card: var(--creator-card);
+  --color-creator-card-hover: var(--creator-card-hover);
+  --color-creator-border: var(--creator-border);
+  --color-creator-text: var(--creator-text);
+  --color-creator-muted: var(--creator-muted);
+}
+
+/* BƯỚC 3: Tiện ích tái sử dụng - Glassmorphism */
+@utility glass-panel {
+  @apply bg-black/40 backdrop-blur-md border border-white/10;
+}
+
+@layer utilities {
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  .animate__animated {
+    animation-duration: var(--animate-duration, 720ms);
+    animation-fill-mode: both;
+  }
+
+  .animate__fadeIn {
+    animation-name: fadeIn;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .creator-studio-shell {
+    position: relative;
+    isolation: isolate;
+    background:
+      radial-gradient(
+        circle at 16% 10%,
+        rgba(226, 177, 60, 0.18),
+        transparent 32%
+      ),
+      radial-gradient(
+        circle at 82% 14%,
+        rgba(91, 119, 255, 0.12),
+        transparent 30%
+      ),
+      linear-gradient(135deg, #070706 0%, #14110e 48%, #080b0f 100%);
+  }
+
+  .creator-studio-shell::before,
+  .creator-studio-shell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .creator-studio-shell::before {
+    background-image:
+      linear-gradient(to bottom, rgba(7, 7, 6, 0.1), rgba(7, 7, 6, 0.92)),
+      url("https://images.unsplash.com/photo-1519608487953-e999c86e7455?q=80&w=1800&auto=format&fit=crop");
+    background-position: center;
+    background-size: cover;
+    opacity: 0.13;
+    mask-image: linear-gradient(
+      to bottom,
+      black 0%,
+      black 55%,
+      transparent 100%
+    );
+  }
+
+  .creator-studio-shell::after {
+    background:
+      radial-gradient(
+        70% 45% at 18% 0%,
+        rgba(226, 177, 60, 0.09),
+        transparent 64%
+      ),
+      radial-gradient(
+        70% 50% at 92% 4%,
+        rgba(120, 165, 255, 0.08),
+        transparent 68%
+      ),
+      repeating-radial-gradient(
+        ellipse at 80% 16%,
+        transparent 0 92px,
+        rgba(226, 177, 60, 0.08) 93px 94px,
+        transparent 95px 190px
+      );
+    opacity: 0.72;
+  }
+
+  .creator-soft-scrollbar {
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  .creator-soft-scrollbar:hover,
+  .creator-soft-scrollbar:focus-within {
+    scrollbar-color: rgba(226, 177, 60, 0.34) transparent;
+  }
+
+  .creator-soft-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .creator-soft-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .creator-soft-scrollbar::-webkit-scrollbar-thumb {
+    background: transparent;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  .creator-soft-scrollbar:hover::-webkit-scrollbar-thumb,
+  .creator-soft-scrollbar:focus-within::-webkit-scrollbar-thumb {
+    background-color: rgba(226, 177, 60, 0.34);
+  }
+
+  .creator-soft-scrollbar::-webkit-scrollbar-button {
+    display: none;
+  }
+
+  .creator-spotlight-text {
+    position: relative;
+    display: inline-block;
+  }
+
+  .creator-spotlight-text::before {
+    content: "";
+    position: absolute;
+    inset: -0.2em -0.45em;
+    z-index: -1;
+    border-radius: 999px;
+    background: radial-gradient(
+      circle at 50% 50%,
+      rgba(226, 177, 60, 0.32),
+      transparent 62%
+    );
+    filter: blur(16px);
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .creator-spotlight-text:hover::before {
+    opacity: 1;
+  }
+
+  .creator-shine-card {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .creator-shine-card::after {
+    content: "";
+    position: absolute;
+    top: -45%;
+    left: -70%;
+    width: 42%;
+    height: 190%;
+    pointer-events: none;
+    transform: rotate(18deg);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.16),
+      transparent
+    );
+    opacity: 0;
+    transition:
+      transform 720ms ease,
+      opacity 180ms ease;
+  }
+
+  .creator-shine-card:hover::after {
+    transform: translateX(360%) rotate(18deg);
+    opacity: 1;
+  }
+
+  .creator-format-select option {
+    background-color: #121214;
+    color: #f8fafc;
+  }
+
+  .creator-format-select option:checked {
+    background-color: rgba(226, 177, 60, 0.24);
+    color: #ffffff;
+  }
+
+  .creator-date-input {
+    color-scheme: dark;
+  }
+
+  .creator-date-input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    height: 100%;
+    opacity: 0;
+    position: absolute;
+    right: 0;
+    width: 3rem;
+  }
+
+  .campaign-log-date-input {
+    position: relative;
+    color-scheme: dark;
+  }
+
+  .campaign-log-date-input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    height: 100%;
+    opacity: 0;
+    position: absolute;
+    right: 0;
+    width: 3rem;
+  }
+
+  .backoffice-shell {
+    --backoffice-bg: #f8f9fa;
+    --backoffice-surface: #ffffff;
+    --backoffice-surface-2: #f8fafc;
+    --backoffice-surface-3: #f1f5f9;
+    --backoffice-text: #0f172a;
+    --backoffice-muted: #64748b;
+    --backoffice-soft: #94a3b8;
+    --backoffice-border: #e2e8f0;
+    --backoffice-border-soft: #f1f5f9;
+    --backoffice-primary: #007a8a;
+    --backoffice-primary-bright: #00d1ff;
+    --backoffice-accent: #7b42ff;
+    --backoffice-gold: #d4af37;
+    --backoffice-danger: #dc2626;
+    --backoffice-success: #059669;
+    background: var(--backoffice-bg);
+    color: var(--backoffice-text);
+    transition:
+      background-color 180ms ease,
+      color 180ms ease;
+  }
+
+  .backoffice-theme-dark {
+    --backoffice-bg: #080808;
+    --backoffice-surface: rgba(18, 18, 20, 0.92);
+    --backoffice-surface-2: rgba(255, 255, 255, 0.045);
+    --backoffice-surface-3: rgba(255, 255, 255, 0.07);
+    --backoffice-text: #f8fafc;
+    --backoffice-muted: rgba(226, 232, 240, 0.68);
+    --backoffice-soft: rgba(226, 232, 240, 0.42);
+    --backoffice-border: rgba(255, 255, 255, 0.12);
+    --backoffice-border-soft: rgba(255, 255, 255, 0.08);
+    --backoffice-primary: #d4af37;
+    --backoffice-primary-bright: #f3d66b;
+    --backoffice-accent: #d4af37;
+    --backoffice-danger: #f87171;
+    --backoffice-success: #34d399;
+    background:
+      radial-gradient(
+        circle at 16% 0%,
+        rgba(212, 175, 55, 0.16),
+        transparent 34%
+      ),
+      radial-gradient(
+        circle at 85% 8%,
+        rgba(151, 176, 255, 0.12),
+        transparent 32%
+      ),
+      linear-gradient(135deg, #070706 0%, #12110f 48%, #080b10 100%);
+  }
+
+  .backoffice-theme-dark::before,
+  .backoffice-theme-dark::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .backoffice-theme-dark::before {
+    background-image:
+      linear-gradient(to bottom, rgba(7, 7, 6, 0.18), rgba(7, 7, 6, 0.92)),
+      url("https://images.unsplash.com/photo-1519608487953-e999c86e7455?q=80&w=1800&auto=format&fit=crop");
+    background-position: center;
+    background-size: cover;
+    opacity: 0.1;
+  }
+
+  .backoffice-theme-dark::after {
+    background:
+      radial-gradient(
+        65% 36% at 15% 0%,
+        rgba(212, 175, 55, 0.1),
+        transparent 70%
+      ),
+      radial-gradient(
+        60% 42% at 94% 8%,
+        rgba(151, 176, 255, 0.08),
+        transparent 70%
+      ),
+      repeating-radial-gradient(
+        ellipse at 82% 10%,
+        transparent 0 100px,
+        rgba(212, 175, 55, 0.055) 101px 102px,
+        transparent 103px 210px
+      );
+    opacity: 0.72;
+  }
+
+  .backoffice-theme-dark > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .backoffice-theme-dark [class~="bg-[#F8F9FA]"],
+  .backoffice-theme-dark [class~="bg-white"] {
+    background-color: var(--backoffice-surface) !important;
+  }
+
+  .backoffice-theme-dark [class~="bg-gray-50"],
+  .backoffice-theme-dark [class~="bg-slate-50"],
+  .backoffice-theme-dark [class~="bg-emerald-50"],
+  .backoffice-theme-dark [class~="bg-indigo-50"],
+  .backoffice-theme-dark [class~="bg-violet-50"],
+  .backoffice-theme-dark [class~="bg-amber-50"],
+  .backoffice-theme-dark [class~="bg-sky-50"],
+  .backoffice-theme-dark [class~="bg-blue-50"],
+  .backoffice-theme-dark [class~="bg-orange-50"],
+  .backoffice-theme-dark [class~="bg-red-50"],
+  .backoffice-theme-dark [class~="bg-[#ECFDF5]"],
+  .backoffice-theme-dark [class~="bg-[#E5FAFF]"],
+  .backoffice-theme-dark [class~="bg-[#F3F0FF]"],
+  .backoffice-theme-dark [class~="bg-[#E6F6F4]"],
+  .backoffice-theme-dark [class~="bg-[#E6F7F9]"] {
+    background-color: rgba(255, 255, 255, 0.035) !important;
+  }
+
+  .backoffice-theme-dark [class~="bg-gray-100"],
+  .backoffice-theme-dark [class~="bg-slate-100"],
+  .backoffice-theme-dark [class~="bg-gray-200"],
+  .backoffice-theme-dark [class~="bg-slate-200"] {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  .backoffice-theme-dark [class~="text-gray-900"],
+  .backoffice-theme-dark [class~="text-gray-800"],
+  .backoffice-theme-dark [class~="text-gray-700"],
+  .backoffice-theme-dark [class~="text-slate-950"],
+  .backoffice-theme-dark [class~="text-slate-900"],
+  .backoffice-theme-dark [class~="text-slate-800"],
+  .backoffice-theme-dark [class~="text-slate-700"] {
+    color: var(--backoffice-text) !important;
+  }
+
+  .backoffice-theme-dark [class~="text-gray-600"],
+  .backoffice-theme-dark [class~="text-gray-500"],
+  .backoffice-theme-dark [class~="text-slate-600"],
+  .backoffice-theme-dark [class~="text-slate-500"],
+  .backoffice-theme-dark [class~="placeholder:text-gray-400"]::placeholder,
+  .backoffice-theme-dark [class~="placeholder:text-slate-400"]::placeholder {
+    color: var(--backoffice-muted) !important;
+  }
+
+  .backoffice-theme-dark [class~="text-gray-400"],
+  .backoffice-theme-dark [class~="text-gray-300"],
+  .backoffice-theme-dark [class~="text-slate-400"],
+  .backoffice-theme-dark [class~="text-slate-300"] {
+    color: var(--backoffice-soft) !important;
+  }
+
+  .backoffice-theme-dark [class~="text-violet-600"],
+  .backoffice-theme-dark [class~="text-[#7B42FF]"],
+  .backoffice-theme-dark [class~="text-[#00D1FF]"],
+  .backoffice-theme-dark [class~="text-[#007A8A]"],
+  .backoffice-theme-dark [class~="text-[#10B981]"],
+  .backoffice-theme-dark [class~="text-[#047857]"],
+  .backoffice-theme-dark [class~="text-[#059669]"] {
+    color: var(--backoffice-primary-bright) !important;
+  }
+
+  .backoffice-theme-dark [class~="border-gray-50"],
+  .backoffice-theme-dark [class~="border-gray-100"],
+  .backoffice-theme-dark [class~="border-gray-200"],
+  .backoffice-theme-dark [class~="border-slate-100"],
+  .backoffice-theme-dark [class~="border-slate-200"],
+  .backoffice-theme-dark [class~="ring-gray-100"] {
+    border-color: var(--backoffice-border) !important;
+  }
+
+  .backoffice-theme-dark input,
+  .backoffice-theme-dark select,
+  .backoffice-theme-dark textarea {
+    background-color: rgba(0, 0, 0, 0.32) !important;
+    border-color: var(--backoffice-border) !important;
+    color: var(--backoffice-text) !important;
+    color-scheme: dark;
+  }
+
+  .backoffice-theme-dark input:focus,
+  .backoffice-theme-dark select:focus,
+  .backoffice-theme-dark textarea:focus {
+    border-color: rgba(212, 175, 55, 0.68) !important;
+    box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.12) !important;
+  }
+
+  .backoffice-theme-dark option {
+    background-color: #111113;
+    color: #f8fafc;
+  }
+
+  .backoffice-theme-dark [class~="hover:bg-gray-50"]:hover,
+  .backoffice-theme-dark [class~="hover:bg-gray-100"]:hover,
+  .backoffice-theme-dark [class~="hover:bg-slate-50"]:hover,
+  .backoffice-theme-dark [class~="hover:bg-slate-100"]:hover,
+  .backoffice-theme-dark [class~="hover:bg-violet-50"]:hover,
+  .backoffice-theme-dark [class~="hover:bg-[#ECFDF5]"]:hover,
+  .backoffice-theme-dark [class~="hover:bg-[#E6F7F9]"]:hover {
+    background-color: rgba(212, 175, 55, 0.1) !important;
+  }
+
+  .backoffice-theme-dark [class*="hover:bg-gray-50"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-gray-100"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-slate-50"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-slate-100"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-violet-50"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-cyan-50"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-blue-50"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-purple-50"]:hover,
+  .backoffice-theme-dark [class*="hover:bg-emerald-50"]:hover {
+    background: linear-gradient(
+      90deg,
+      rgba(212, 175, 55, 0.16),
+      rgba(255, 255, 255, 0.055)
+    ) !important;
+    color: var(--backoffice-text) !important;
+  }
+
+  .backoffice-theme-dark table tbody tr {
+    transition:
+      background-color 160ms ease,
+      color 160ms ease,
+      border-color 160ms ease;
+  }
+
+  .backoffice-theme-dark table tbody tr:hover {
+    background: linear-gradient(
+      90deg,
+      rgba(212, 175, 55, 0.14),
+      rgba(255, 255, 255, 0.045)
+    ) !important;
+    color: var(--backoffice-text) !important;
+  }
+
+  .backoffice-theme-dark table tbody tr:hover [class~="text-gray-900"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-gray-800"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-slate-900"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-slate-800"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-slate-700"] {
+    color: #ffffff !important;
+  }
+
+  .backoffice-theme-dark table tbody tr:hover [class~="text-gray-700"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-gray-600"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-gray-500"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-slate-600"],
+  .backoffice-theme-dark table tbody tr:hover [class~="text-slate-500"] {
+    color: rgba(248, 250, 252, 0.78) !important;
+  }
+
+  .backoffice-theme-dark [class~="hover:text-gray-900"]:hover,
+  .backoffice-theme-dark [class~="hover:text-slate-900"]:hover,
+  .backoffice-theme-dark [class~="hover:text-violet-600"]:hover,
+  .backoffice-theme-dark [class~="hover:text-[#007A8A]"]:hover,
+  .backoffice-theme-dark [class~="hover:text-[#10B981]"]:hover {
+    color: var(--backoffice-primary-bright) !important;
+  }
+
+  .backoffice-theme-dark [class~="bg-[#00D1FF]"],
+  .backoffice-theme-dark [class~="bg-[#007A8A]"],
+  .backoffice-theme-dark [class~="bg-[#7B42FF]"],
+  .backoffice-theme-dark [class~="bg-[#10B981]"],
+  .backoffice-theme-dark [class~="bg-violet-600"] {
+    background-color: var(--backoffice-primary) !important;
+    color: #050505 !important;
+  }
+
+  .backoffice-theme-dark [class~="shadow-sm"],
+  .backoffice-theme-dark [class~="shadow-md"],
+  .backoffice-theme-dark [class~="shadow-lg"] {
+    box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28) !important;
+  }
+
+  .backoffice-theme-dark table tbody tr {
+    border-color: var(--backoffice-border-soft);
+  }
+
+  .backoffice-theme-toggle {
+    border-color: rgba(15, 23, 42, 0.1) !important;
+    background: rgba(255, 255, 255, 0.96) !important;
+    color: #475569 !important;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08) !important;
+  }
+
+  .backoffice-theme-toggle:hover {
+    border-color: rgba(15, 23, 42, 0.18) !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .backoffice-theme-toggle-icon {
+    background: rgba(15, 23, 42, 0.08);
+  }
+
+  .backoffice-theme-dark .backoffice-theme-toggle {
+    border-color: rgba(212, 175, 55, 0.34) !important;
+    background: rgba(212, 175, 55, 0.1) !important;
+    color: #f5d46e !important;
+    box-shadow: 0 0 24px rgba(212, 175, 55, 0.12) !important;
+  }
+
+  .backoffice-theme-dark .backoffice-theme-toggle:hover {
+    border-color: rgba(245, 212, 110, 0.58) !important;
+    background: rgba(212, 175, 55, 0.16) !important;
+    color: #ffe88b !important;
+  }
+
+  .backoffice-theme-dark .backoffice-theme-toggle-icon {
+    background: rgba(212, 175, 55, 0.16);
+  }
+
+  .backoffice-theme-switch {
+    border-color: rgba(15, 23, 42, 0.12) !important;
+    background: rgba(148, 163, 184, 0.26) !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  }
+
+  .backoffice-theme-switch-knob {
+    background: #ffffff;
+    color: #d4af37;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
+  }
+
+  .backoffice-theme-dark .backoffice-theme-switch {
+    border-color: rgba(212, 175, 55, 0.4) !important;
+    background: #d4af37 !important;
+    box-shadow: 0 0 22px rgba(212, 175, 55, 0.18);
+  }
+
+  .backoffice-theme-dark .backoffice-theme-switch-knob {
+    background: #191919;
+    color: #f5d46e;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  }
+
+  .backoffice-theme-light [class~="bg-[#10B981]"] {
+    background-color: #00d1ff !important;
+  }
+
+  .backoffice-theme-light [class~="bg-[#ECFDF5]"] {
+    background-color: #e5faff !important;
+  }
+
+  .backoffice-theme-light [class~="text-[#10B981]"],
+  .backoffice-theme-light [class~="text-[#047857]"],
+  .backoffice-theme-light [class~="text-[#059669]"] {
+    color: #007a8a !important;
+  }
+
+  .backoffice-theme-light [class~="border-[#10B981]/20"] {
+    border-color: rgba(0, 122, 138, 0.22) !important;
+  }
+}

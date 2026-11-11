@@ -1,0 +1,295 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  application:
+    name: talex-server
+
+  datasource:
+    postgres:
+      driver-class-name: org.postgresql.Driver
+      username: ${DB_USERNAME:postgres}
+      password: ${DB_PASSWORD:12345}
+      jdbc-url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:talex-db}${DB_OPTIONS:?reWriteBatchedInserts=true}
+      hikari:
+        connection-timeout: 30000
+        maximum-pool-size: 20
+        minimum-idle: 2
+        idle-timeout: 600000
+        max-lifetime: 1800000
+    questdb:
+      jdbc-url: jdbc:postgresql://${QUESTDB_HOST}:${QUESTDB_PORT}/qdb
+      username: ${QUESTDB_USER:admin}
+      password: ${QUESTDB_PASSWORD:quest}
+      driver-class-name: org.postgresql.Driver
+
+  task:
+    scheduling:
+      # Mặc định Spring chỉ dùng 1 thread cho MỌI @Scheduled trong toàn app (15 scheduler
+      # hiện có: OrderExpiryScheduler, MongoFeatureSyncScheduler, SqsMediaEventPoller...).
+      # Job nào chạy hơi lâu sẽ chặn luôn heartbeat SSE (SseNotificationServiceImpl),
+      # heartbeat trễ quá proxy_read_timeout (60s mặc định) của nginx khiến nginx tưởng
+      # backend chết và cắt kết nối SSE — gặp thật trong demo, log nginx ghi "upstream
+      # timed out ... /api/v1/sse/pipeline/connect". Cấp pool riêng để heartbeat luôn có
+      # thread trống, không phụ thuộc các job khác có đang chạy hay không.
+      pool:
+        size: 10
+
+  jpa:
+    show-sql: ${JPA_SHOW_SQL:false}
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 50
+          order_inserts: true
+          order_updates: true
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 500MB
+      max-request-size: 500MB
+  data:
+    redis:
+      host: ${REDIS_HOST:redis-14339.crce219.us-east-1-4.ec2.cloud.redislabs.com}
+      port: ${REDIS_PORT:14339}
+      username: ${REDIS_USERNAME:default}
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: ${REDIS_SSL:false}
+      timeout: ${REDIS_TIMEOUT:5000ms}
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+          min-idle: 0
+          max-wait: 2000ms
+  threads:
+    virtual:
+      enabled: true
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  kafka:
+    # Service URI
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+
+    # Kafka Streams
+    streams:
+      auto-startup: false
+    properties:
+      security.protocol: SSL
+      # Nội dung file CA certificate
+      ssl.truststore.type: PEM
+      ssl.truststore.certificates: "${KAFKA_CA_CERTB64}"
+      # Nội dung file Access certificate
+      ssl.keystore.type: PEM
+      ssl.keystore.certificate.chain: "${KAFKA_ACCESS_CERTB64}"
+      # Nội dung file Access key
+      ssl.keystore.key: "${KAFKA_ACCESS_KEYB64}"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      buffer-memory: 4194304 # 4MB
+      batch-size: 8192
+    consumer:
+      group-id: talex-interaction-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: 500
+      # Mặc định Spring Boot là true — Kafka tự commit offset theo chu kỳ (5s) BẤT KỂ
+      # @KafkaListener đã xử lý xong hay chưa. Nếu xử lý bị rớt giữa chừng đúng lúc timer
+      # chạy, message coi như "đã đọc" vĩnh viễn dù chưa xử lý — mất dữ liệu âm thầm,
+      # không log, không lỗi (đã xảy ra thật ở content-copyright-result: consumer group
+      # lag=0 nhưng 4/7 message chưa hề được xử lý). Tắt để chỉ commit SAU KHI listener
+      # trả về thành công (ackMode BATCH mặc định của Spring khi tắt auto-commit).
+      enable-auto-commit: false
+      properties:
+        fetch.min.bytes: 1048576 # 1MB
+        fetch.max.bytes: 5242880 # 5MB
+        max.partition.fetch.bytes: 1048576 # 1MB
+        fetch.max.wait.ms: 1000
+  mongodb:
+    uri: mongodb+srv://${MONGO_USERNAME}:${MONGO_PASSWORD}@${MONGO_HOST}/${MONGO_DATABASE}?appName=${MONGO_APP_NAME:TalexServer}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+integration:
+  clients:
+    fpt-ai:
+      base-url: https://api.fpt.ai
+      api-key: ${FPT_AI_API_KEY}
+      connection-timeout-ms: 5000
+      read-timeout-ms: 30000
+
+eKYC:
+  id-recognition:
+    provider: fpt-ai
+
+sepay:
+  account-number: ${SEPAY_ACCOUNT_NUMBER:}
+  bank-name: ${SEPAY_BANK_NAME:}
+  webhook-api-key: ${SEPAY_WEBHOOK_API_KEY:}
+  qr-base-url: ${SEPAY_QR_BASE_URL:https://qr.sepay.vn/img}
+  order-expiry-minutes: ${SEPAY_ORDER_EXPIRY_MINUTES:30}
+  retry-block-window-minutes: ${SEPAY_RETRY_BLOCK_WINDOW_MINUTES:5}
+  transfer-content-prefix: ${SEPAY_TRANSFER_CONTENT_PREFIX:}
+  einvoice-base-url: ${SEPAY_EINVOICE_BASE_URL:https://einvoice-api-sandbox.sepay.vn}
+  einvoice-username: ${SEPAY_EINVOICE_USERNAME:}
+  einvoice-password: ${SEPAY_EINVOICE_PASSWORD:}
+
+payment:
+  order:
+    expiry-fixed-delay-ms: ${PAYMENT_ORDER_EXPIRY_FIXED_DELAY_MS:60000}
+    expiry-initial-delay-ms: ${PAYMENT_ORDER_EXPIRY_INITIAL_DELAY_MS:60000}
+  invoice:
+    polling-fixed-delay-ms: ${PAYMENT_INVOICE_POLLING_FIXED_DELAY_MS:15000}
+    polling-initial-delay-ms: ${PAYMENT_INVOICE_POLLING_INITIAL_DELAY_MS:15000}
+    max-poll-attempts: ${PAYMENT_INVOICE_MAX_POLL_ATTEMPTS:20}
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10 # Last 10 requests
+        minimumNumberOfCalls: 5 # Start calculating after at least 5 requests
+        failureRateThreshold: 50 # Open circuit when 50% of calls fail or time out
+        slowCallRateThreshold: 50 # Open circuit when 50% of calls are slow
+        slowCallDurationThreshold: 10000ms # Slow call threshold: 10 seconds
+        waitDurationInOpenState: 30000ms # Wait 30 seconds before half-open
+        permittedNumberOfCallsInHalfOpenState: 3 # Probe calls in half-open state
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+    instances:
+      fptAiFrontOcr:
+        baseConfig: default
+      fptAiBackOcr:
+        baseConfig: default
+
+jwt:
+  secret: ${JWT_SECRET:dGFsZXgtc2VjcmV0LWtleS1mb3ItZGV2ZWxvcG1lbnQtb25seQ==}
+  access-token-expiration: 9000000
+  verification-token-expiration: ${JWT_VERIFICATION_TOKEN_EXPIRATION:1800000}
+  refresh-token-expiration: 604800000
+
+google:
+  client-id:
+    web: ${GOOGLE_CLIENT_ID_WEB:}
+    android: ${GOOGLE_CLIENT_ID_ANDROID:}
+    ios: ${GOOGLE_CLIENT_ID_IOS:}
+
+admob:
+  ssv:
+    public-keys-url: ${ADMOB_SSV_PUBLIC_KEYS_URL:https://www.gstatic.com/admob/reward/verifier-keys.json}
+    signature-verification-enabled: ${ADMOB_SSV_SIGNATURE_VERIFICATION_ENABLED:true}
+
+otp:
+  expiration-minutes: 10
+  length: 6
+
+login:
+  rate-limit-minutes: 15
+
+app:
+  env: ${APP_ENV:${SPRING_PROFILES_ACTIVE:local}}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080}
+  recommendation:
+    new-releases:
+      max-impression: 100
+
+media:
+  app-env: ${APP_ENV:${SPRING_PROFILES_ACTIVE:local}}
+  max-video-size-mb: ${MAX_VIDEO_SIZE_MB:2048}
+  video-upload-chunk-size-mb: ${VIDEO_UPLOAD_CHUNK_SIZE_MB:10}
+  min-video-upload-chunk-size-mb: 5
+  allowed-video-mime-types: ${ALLOWED_VIDEO_MIME_TYPES:video/mp4,video/quicktime,video/webm,video/x-matroska}
+  default-video-protection-type: ${DEFAULT_VIDEO_PROTECTION_TYPE:SIGNED_URL}
+  playback-signing-secret: ${MEDIA_PLAYBACK_SIGNING_SECRET:}
+  signed-playback-ttl-seconds: ${SIGNED_PLAYBACK_TTL_SECONDS:300}
+  enable-drm: ${ENABLE_DRM:false}
+  drm-provider: ${DRM_PROVIDER:NONE}
+  drm-license-server-url: ${DRM_LICENSE_SERVER_URL:}
+  drm-certificate-url: ${DRM_CERTIFICATE_URL:}
+  cloudinary:
+    cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+    api-key: ${CLOUDINARY_API_KEY:}
+    api-secret: ${CLOUDINARY_API_SECRET:}
+    video-folder: ${CLOUDINARY_VIDEO_FOLDER:talex}
+    image-folder: ${CLOUDINARY_IMAGE_FOLDER:talex}
+    hls-streaming-profile: ${CLOUDINARY_HLS_STREAMING_PROFILE:sp_hd}
+    provider-delivery-type: ${CLOUDINARY_PROVIDER_DELIVERY_TYPE:authenticated}
+    auth-token-key: ${CLOUDINARY_AUTH_TOKEN_KEY:}
+    webhook-url: ${CLOUDINARY_WEBHOOK_URL:}
+    webhook-signing-secret: ${CLOUDINARY_WEBHOOK_SIGNING_SECRET:${CLOUDINARY_API_SECRET:}}
+    api-base-url: ${CLOUDINARY_API_BASE_URL:https://api.cloudinary.com}
+
+    delivery-base-url: ${CLOUDINARY_DELIVERY_BASE_URL:https://res.cloudinary.com}
+
+    reconcile-enabled: ${CLOUDINARY_RECONCILE_ENABLED:true}
+    reconcile-fixed-delay-ms: ${CLOUDINARY_RECONCILE_FIXED_DELAY_MS:60000}
+    reconcile-stale-after-seconds: ${CLOUDINARY_RECONCILE_STALE_AFTER_SECONDS:30}
+    reconcile-eager-retry-after-seconds: ${CLOUDINARY_RECONCILE_EAGER_RETRY_AFTER_SECONDS:300}
+    reconcile-page-size: ${CLOUDINARY_RECONCILE_PAGE_SIZE:20}
+
+  # === Provider selection: CLOUDINARY | AWS ===
+  provider: ${MEDIA_PROVIDER:AWS}
+
+  # === AWS S3 + CloudFront ===
+  aws:
+    region: ${AWS_REGION:ap-southeast-1}
+    bucket-name: ${AWS_S3_BUCKET:}
+    cloudfront-domain: ${AWS_CLOUDFRONT_DOMAIN:}
+    access-key-id: ${AWS_ACCESS_KEY_ID:}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY:}
+    media-convert-endpoint: ${AWS_MEDIACONVERT_ENDPOINT:}
+    media-convert-queue-arn: ${AWS_MEDIACONVERT_QUEUE_ARN:}
+    media-convert-role-arn: ${AWS_MEDIACONVERT_ROLE_ARN:}
+    sqs-queue-url: ${AWS_SQS_QUEUE_URL:}
+    cloudfront-key-pair-id: ${AWS_CLOUDFRONT_KEY_PAIR_ID:}
+    cloudfront-private-key: ${AWS_CLOUDFRONT_PRIVATE_KEY:}
+
+questdb:
+  host: ${QUESTDB_HOST}
+  ilp-port: ${QUESTDB_ILP_PORT:9009}
+
+heartbeat:
+  interval: 5
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    org.springframework.data.redis: WARN
+    io.lettuce.core: WARN
+
+python:
+  api: ${PYTHON_API:http://localhost:8000}
+
+payos:
+  client-id: ${PAYOS_CLIENT_ID:Dien_Client_ID_Tu_Dashboard}
+  api-key: ${PAYOS_API_KEY:Dien_API_Key_Tu_Dashboard}
+  checksum-key: ${PAYOS_CHECKSUM_KEY:Dien_Checksum_Key_Tu_Dashboard}
+  payout-url: ${PAYOS_PAYOUT_URL:https://api-merchant.payos.vn/v2/payouts}
+  payout-account-balance-url: ${PAYOUT_ACCOUNT_BALANCE_URL:https://api-merchant.payos.vn/v1/payouts-account/balance}
+
+ai:
+  train:
+    token: talex_secret_demo_2026

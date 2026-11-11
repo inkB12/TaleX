@@ -1,0 +1,90 @@
+"""Pydantic models for Kafka messages — schema matches Spring Boot DTOs."""
+
+import re
+
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional
+
+# BE sinh mediaId bằng GenerationType.UUID (chỉ gồm hex + gạch ngang) — pattern này khớp
+# đúng UUID, chặn sớm giá trị bất thường (vd chứa dấu ") trước khi tới bất kỳ câu lệnh
+# Milvus expr nào ghép chuỗi từ media_id.
+_MEDIA_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
+
+
+class PipelineJobMessage(BaseModel):
+    """Incoming job from Spring Boot."""
+    model_config = {"populate_by_name": True}
+
+    media_id: str = Field(alias="mediaId")
+    s3_key: str = Field(alias="s3Key")
+    s3_bucket: str = Field(alias="s3Bucket")
+    media_type: str = Field(alias="mediaType")
+    correlation_id: str = Field(alias="correlationId")
+    requested_at: str = Field(alias="requestedAt")
+    # Chỉ dùng cho Content ID (copyright job) — loại trừ so khớp trong cùng creator.
+    # Rỗng ở moderation job (BE không set).
+    creator_id: str = Field(default="", alias="creatorId")
+
+    @field_validator("media_id")
+    @classmethod
+    def validate_media_id(cls, v: str) -> str:
+        if not _MEDIA_ID_PATTERN.fullmatch(v):
+            raise ValueError(f"media_id has unexpected format: {v!r}")
+        return v
+
+
+class CopyrightViolationItem(BaseModel):
+    """Single violation segment in copyright result."""
+    model_config = {"populate_by_name": True}
+
+    source_media_id: str = Field(alias="sourceMediaId")
+    start_time_target: float = Field(alias="startTimeTarget")
+    end_time_target: float = Field(alias="endTimeTarget")
+    start_time_source: float = Field(alias="startTimeSource")
+    end_time_source: float = Field(alias="endTimeSource")
+    similarity_score: float = Field(alias="similarityScore")
+    violation_type: str = Field(alias="violationType")
+
+
+class CopyrightResultMessage(BaseModel):
+    """Outgoing copyright result to Spring Boot."""
+    model_config = {"populate_by_name": True}
+
+    media_id: str = Field(alias="mediaId")
+    correlation_id: str = Field(alias="correlationId")
+    content_id: str = Field(alias="contentId")
+    is_duplicate: bool = Field(alias="isDuplicate")
+    overall_similarity: float = Field(alias="overallSimilarity")
+    fingerprint_count: int = Field(alias="fingerprintCount")
+    violations: list[CopyrightViolationItem] = []
+    processed_at: str = Field(alias="processedAt")
+    success: bool = True
+    error_message: Optional[str] = Field(None, alias="errorMessage")
+    preview_s3_key: Optional[str] = Field(None, alias="previewS3Key")
+
+
+class ModerationViolationItem(BaseModel):
+    """Single violation in moderation result."""
+    model_config = {"populate_by_name": True}
+
+    timestamp_ms: float = Field(alias="timestampMs")
+    end_timestamp_ms: float = Field(alias="endTimestampMs")
+    label: str
+    confidence: float
+    suggestion: str
+
+
+class ModerationResultMessage(BaseModel):
+    """Outgoing moderation result to Spring Boot."""
+    model_config = {"populate_by_name": True}
+
+    media_id: str = Field(alias="mediaId")
+    correlation_id: str = Field(alias="correlationId")
+    is_safe: bool = Field(alias="isSafe")
+    primary_label: Optional[str] = Field(None, alias="primaryLabel")
+    confidence_score: float = Field(alias="confidenceScore")
+    violations: list[ModerationViolationItem] = []
+    raw_response: str = Field(alias="rawResponse")
+    processed_at: str = Field(alias="processedAt")
+    success: bool = True
+    error_message: Optional[str] = Field(None, alias="errorMessage")

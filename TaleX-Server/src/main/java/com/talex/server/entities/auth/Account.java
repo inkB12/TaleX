@@ -1,0 +1,98 @@
+package com.talex.server.entities.auth;
+
+import com.talex.server.entities.ads.AdvertiseProfile;
+import com.talex.server.entities.subscription.AccountSubscription;
+import com.talex.server.enums.AccountStatus;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+@Entity
+@Table(name = "accounts")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class Account {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "account_id")
+    private UUID accountId;
+
+    @Column(name = "username", nullable = false, unique = true)
+    private String username;
+
+    @Column(name = "email", nullable = false, unique = true)
+    private String email;
+
+    @Column(name = "password")
+    private String password;
+
+    @Column(name = "phone")
+    private String phone;
+
+    @Column(name = "full_name")
+    private String fullName;
+
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    @Builder.Default
+    private AccountStatus status = AccountStatus.VERIFYING;
+
+    @Column(name = "google_sub_id", unique = true)
+    private String googleSubId;
+
+    @Column(name = "avatar_url")
+    private String avatarUrl;
+
+    @Column(name = "total_followers_by", nullable = false)
+    @Builder.Default
+    private Long totalFollowersBy = 0L;
+
+    @Column(name = "total_followers_to", nullable = false)
+    @Builder.Default
+    private Long totalFollowersTo = 0L;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @OneToMany(mappedBy = "account", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<AccountSubscription> accountSubscriptions = new ArrayList<>();
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "role_id", nullable = false)
+    private Role role;
+
+    @Column(name = "last_interaction_time")
+    private LocalDateTime lastInteractionTime;
+
+    @Column(name = "is_24h")
+    @Builder.Default
+    private Boolean is24h = false;
+
+    @Column(name = "is_7d")
+    @Builder.Default
+    private Boolean is7d = false;
+
+    @OneToOne(mappedBy = "account", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private AdvertiseProfile advertiseProfile;
+}

@@ -1,0 +1,59 @@
+package com.talex.server.mappers.subscription.impls;
+
+import com.talex.server.dtos.subscription.request.SubscriptionRequestDto;
+import com.talex.server.dtos.subscription.response.SubscriptionResponseDto;
+import com.talex.server.entities.subscription.Subscription;
+import org.springframework.stereotype.Component;
+
+import java.util.Optional;
+
+@Component
+public class SubscriptionMapperImpl implements com.talex.server.mappers.subscription.SubscriptionMapper {
+
+    @Override
+    public Subscription toEntity(SubscriptionRequestDto requestDto) {
+        if (requestDto == null) {
+            return null;
+        }
+
+        return Subscription.builder()
+                .tier(requestDto.getTier())
+                .description(requestDto.getDescription())
+                .price(requestDto.getPrice())
+                .duration(requestDto.getDuration())
+                .durationUnit(Optional.ofNullable(requestDto.getDurationUnit())
+                        .map(Enum::toString)
+                        .orElse(null))
+                .build();
+    }
+
+    @Override
+    public SubscriptionResponseDto toResponseDto(Subscription subscription) {
+        if (subscription == null) {
+            return null;
+        }
+
+        return SubscriptionResponseDto.builder()
+                .subscriptionId(subscription.getSubscriptionId())
+                .tier(subscription.getTier())
+                .description(subscription.getDescription())
+                .price(subscription.getPrice())
+                .duration(subscription.getDuration())
+                .durationUnit(subscription.getDurationUnit())
+                .totalPurchases(subscription.getTotalPurchases())
+                .isDeleted(subscription.getIsDeleted())
+                .createdAt(subscription.getCreatedAt())
+                .updatedAt(subscription.getUpdatedAt())
+                .build();
+    }
+
+    @Override
+    public void updateEntity(SubscriptionRequestDto requestDto, Subscription subscription) {
+        if (requestDto == null || subscription == null) {
+            return;
+        }
+
+        Optional.ofNullable(requestDto.getTier()).ifPresent(subscription::setTier);
+        Optional.ofNullable(requestDto.getDescription()).ifPresent(subscription::setDescription);
+    }
+}

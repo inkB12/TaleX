@@ -1,0 +1,128 @@
+package com.talex.server.services.campaign.impls;
+
+import com.talex.server.dtos.BaseFilterRequestDto;
+import com.talex.server.dtos.BasePageResponse;
+import com.talex.server.dtos.campaign.request.EngagementServiceRequestDto;
+import com.talex.server.dtos.requests.filters.EngagementServiceFilterRequestDto;
+import com.talex.server.dtos.campaign.response.EngagementServiceResponseDto;
+import com.talex.server.entities.campaign.EngagementService;
+import com.talex.server.exceptions.codes.campaign.EngagementErrorCode;
+import com.talex.server.exceptions.details.campaign.EngagementServiceException;
+import com.talex.server.mappers.campaign.EngagementServiceMapper;
+import com.talex.server.repositories.campaign.EngagementServiceRepository;
+import com.talex.server.services.campaign.EngagementServiceService;
+import com.talex.server.specifications.campaign.EngagementServiceSpec;
+import com.talex.server.utils.PageUtils;
+import com.talex.server.utils.ValidationUtils;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Optional;
+
+@Service
+@RequiredArgsConstructor
+public class EngagementServiceServiceImpl implements EngagementServiceService {
+    private final EngagementServiceRepository engagementServiceRepository;
+    private final EngagementServiceMapper engagementServiceMapper;
+
+    @Override
+    @Transactional
+    public EngagementServiceResponseDto createEngagementService(EngagementServiceRequestDto requestDto) {
+        EngagementService entity = engagementServiceMapper.toEntity(requestDto);
+        EngagementService saved = engagementServiceRepository.save(entity);
+        return engagementServiceMapper.toResponseDto(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public BasePageResponse<EngagementServiceResponseDto> filterEngagementServices(
+            EngagementServiceFilterRequestDto filterRequest
+    ) {
+        Sort sort = buildSort(filterRequest);
+        Pageable pageable = PageUtils.buildPageable(
+                filterRequest.getPage(), filterRequest.getPageSize(), sort);
+
+        Page<EngagementService> pageResult = engagementServiceRepository.findAll(
+                EngagementServiceSpec.filterByCriteria(filterRequest.getCriteria()),
+                pageable
+        );
+
+        List<EngagementServiceResponseDto> content = pageResult.stream()
+                .map(engagementServiceMapper::toResponseDto)
+                .toList();
+
+        return BasePageResponse.<EngagementServiceResponseDto>builder()
+                .content(content)
+                .pageNumber(pageResult.getNumber() + 1)
+                .pageSize(pageResult.getSize())
+                .totalElements(pageResult.getTotalElements())
+                .totalPages(pageResult.getTotalPages())
+                .isFirst(pageResult.isFirst())
+                .isLast(pageResult.isLast())
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public EngagementServiceResponseDto getEngagementServiceById(String engagementServiceId) {
+        return engagementServiceMapper.toResponseDto(findById(engagementServiceId));
+    }
+
+    @Override
+    @Transactional
+    public EngagementServiceResponseDto updateEngagementService(
+            String engagementServiceId,
+            EngagementServiceRequestDto requestDto
+    ) {
+        EngagementService entity = findById(engagementServiceId);
+        engagementServiceMapper.updateEntity(requestDto, entity);
+        EngagementService updated = engagementServiceRepository.save(entity);
+        return engagementServiceMapper.toResponseDto(updated);
+    }
+
+    @Override
+    @Transactional
+    public void deleteEngagementService(String engagementServiceId) {
+        EngagementService entity = findById(engagementServiceId);
+        entity.setIsDeleted(true);
+        engagementServiceRepository.save(entity);
+    }
+
+    @Override
+    public EngagementService findById(String id) {
+        return engagementServiceRepository.findByEngagementServiceIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> new EngagementServiceException(EngagementErrorCode.NOT_FOUND, "EngagementService not found with id: " + id));
+    }
+
+    @Override
+    public EngagementService findActive(String id){
+        EngagementService entity = findById(id);
+        if (!entity.getIsActive()){
+            throw new EngagementServiceException(EngagementErrorCode.NOT_FOUND, "Active engagementService not found with id: " + id);
+        }
+
+        return entity;
+    }
+
+    private Sort buildSort(BaseFilterRequestDto filterRequest) {
+        String sortDirection = Optional.ofNullable(filterRequest.getSortDirection()).orElse("DESC");
+        Sort.Direction direction = "ASC".equalsIgnoreCase(sortDirection) ? Sort.Direction.ASC : Sort.Direction.DESC;
+
+        return Sort.by(direction, normalizeSortProperty(filterRequest.getSortBy()));
+    }
+
+    private String normalizeSortProperty(String sortBy) {
+        if (ValidationUtils.isNullOrEmpty(sortBy)) {
+            return "createdAt";
+        }
+        return switch (sortBy) {
+            case "name", "price", "targetValue", "createdAt", "updatedAt" -> sortBy;
+            default -> "createdAt";
+        };
+    }
+}

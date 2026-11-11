@@ -1,0 +1,778 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import {
+  useMongoUserFeatures,
+  useMongoUserDynamicFeatures,
+} from "../hooks/use-admin-channels";
+import {
+  Database,
+  AlertCircle,
+  Clock,
+  MousePointer,
+  Heart,
+  Bookmark,
+  Share2,
+  MessageSquare,
+  Activity,
+  Globe,
+  User,
+  Tag,
+  FolderTree,
+  BarChart3,
+  Flame,
+  Sparkles,
+  Zap,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+
+interface MongoUserFeaturesViewProps {
+  accountId: string;
+}
+
+export function MongoUserFeaturesView({ accountId }: MongoUserFeaturesViewProps) {
+  // Static mongo features query (GET /api/v1/mongo/features/user/{id})
+  const {
+    data: userFeatures,
+    isLoading: isLoadingStatic,
+    isError: isErrorStatic,
+    error: staticError,
+    refetch: refetchStatic,
+    isRefetching: isRefetchingStatic,
+  } = useMongoUserFeatures(accountId);
+
+  // Dynamic mongo features query (GET /api/v1/mongo/features/user/{id}/dynamic)
+  const {
+    data: dynamicFeatures,
+    isLoading: isLoadingDynamic,
+    isError: isErrorDynamic,
+    refetch: refetchDynamic,
+  } = useMongoUserDynamicFeatures(accountId);
+
+  const [copiedJson, setCopiedJson] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "genres" | "tags">("overview");
+
+  // FE Pagination state for Genres & Tags (5 items per page)
+  const [genresPage, setGenresPage] = useState<number>(1);
+  const [tagsPage, setTagsPage] = useState<number>(1);
+
+  useEffect(() => {
+    setGenresPage(1);
+    setTagsPage(1);
+  }, [accountId]);
+
+  const GENRES_PAGE_SIZE = 5;
+  const sortedGenresKeys = Object.keys(userFeatures?.preferences?.genresClicksRaw || {}).sort(
+    (a, b) =>
+      (userFeatures?.preferences?.genresClicksRaw?.[b] || 0) -
+      (userFeatures?.preferences?.genresClicksRaw?.[a] || 0)
+  );
+  const totalGenresPages = Math.ceil(sortedGenresKeys.length / GENRES_PAGE_SIZE) || 1;
+  const paginatedGenresKeys = sortedGenresKeys.slice(
+    (genresPage - 1) * GENRES_PAGE_SIZE,
+    genresPage * GENRES_PAGE_SIZE
+  );
+
+  const TAGS_PAGE_SIZE = 5;
+  const sortedTagsKeys = Object.keys(userFeatures?.preferences?.tagsClicksRaw || {}).sort(
+    (a, b) =>
+      (userFeatures?.preferences?.tagsClicksRaw?.[b] || 0) -
+      (userFeatures?.preferences?.tagsClicksRaw?.[a] || 0)
+  );
+  const totalTagsPages = Math.ceil(sortedTagsKeys.length / TAGS_PAGE_SIZE) || 1;
+  const paginatedTagsKeys = sortedTagsKeys.slice(
+    (tagsPage - 1) * TAGS_PAGE_SIZE,
+    tagsPage * TAGS_PAGE_SIZE
+  );
+
+  const handleCopyJson = () => {
+    if (userFeatures) {
+      navigator.clipboard.writeText(
+        JSON.stringify(
+          {
+            staticProfile: userFeatures,
+            dynamicTop5: dynamicFeatures,
+          },
+          null,
+          2
+        )
+      );
+      setCopiedJson(true);
+      setTimeout(() => setCopiedJson(false), 2000);
+    }
+  };
+
+  const formatSeconds = (sec: number = 0) => {
+    if (sec <= 0) return "0s";
+    const mins = Math.floor(sec / 60);
+    const remainingSec = sec % 60;
+    if (mins === 0) return `${remainingSec}s`;
+    return `${mins}m ${remainingSec}s`;
+  };
+
+  const formatPercentage = (num: number = 0) => {
+    return `${(num * 100).toFixed(1)}%`;
+  };
+
+  const handleRefreshAll = () => {
+    refetchStatic();
+    refetchDynamic();
+  };
+
+  return (
+    <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-b from-emerald-50/30 via-white to-white p-6 shadow-sm space-y-6 backoffice-dark:border-emerald-500/20 backoffice-dark:bg-white/[0.03] backoffice-dark:from-transparent backoffice-dark:via-transparent backoffice-dark:to-transparent">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-emerald-100 pb-4 backoffice-dark:border-white/10">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white font-bold shadow-md shadow-emerald-200">
+            <Database className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 backoffice-dark:text-white">
+                Đặc Điểm Người Dùng
+              </h3>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Dynamic Top 5 Highlights Section */}
+      <div className="rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50/70 via-orange-50/50 to-amber-50/70 p-4 space-y-3 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.03] backoffice-dark:from-transparent backoffice-dark:via-transparent backoffice-dark:to-transparent">
+        <div className="flex items-center justify-between border-b border-amber-200/60 pb-2 backoffice-dark:border-white/10">
+          <div className="flex items-center gap-2">
+            <Flame className="h-4 w-4 text-amber-600 fill-amber-500" />
+            <h4 className="font-bold text-xs text-amber-950 uppercase tracking-wider backoffice-dark:text-amber-300">
+              Top 5 Sở Thích
+            </h4>
+          </div>
+        </div>
+
+        {/* Dynamic Categories & Tags Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Top 5 Categories */}
+          <div className="space-y-1.5">
+            <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5 backoffice-dark:text-white/80">
+              <FolderTree className="h-3.5 w-3.5 text-amber-600" />
+              Danh Mục Xem Nhiều Nhất:
+            </span>
+
+            {isLoadingDynamic ? (
+              <div className="h-8 w-full animate-pulse rounded-lg bg-amber-100/50 backoffice-dark:bg-white/10" />
+            ) : dynamicFeatures?.categories && dynamicFeatures.categories.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {dynamicFeatures.categories.map((catName, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-xs font-bold text-white shadow-sm border border-amber-400"
+                  >
+                    <span className="rounded-full bg-amber-950/30 px-1.5 py-0.2 text-[10px] font-black">
+                      #{idx + 1}
+                    </span>
+                    {catName}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-amber-700 italic backoffice-dark:text-amber-400/80">Chưa ghi nhận top danh mục</span>
+            )}
+          </div>
+
+          {/* Top 5 Tags */}
+          <div className="space-y-1.5">
+            <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5 backoffice-dark:text-white/80">
+              <Tag className="h-3.5 w-3.5 text-orange-600" />
+              Thẻ Tag Xem Nhiều Nhất:
+            </span>
+
+            {isLoadingDynamic ? (
+              <div className="h-8 w-full animate-pulse rounded-lg bg-amber-100/50 backoffice-dark:bg-white/10" />
+            ) : dynamicFeatures?.tags && dynamicFeatures.tags.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {dynamicFeatures.tags.map((tagName, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 rounded-full bg-orange-600 px-2.5 py-1 text-xs font-bold text-white shadow-sm border border-orange-500"
+                  >
+                    <span className="rounded-full bg-orange-950/30 px-1.5 py-0.2 text-[10px] font-black">
+                      #{idx + 1}
+                    </span>
+                    {tagName}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-amber-700 italic backoffice-dark:text-amber-400/80">Chưa ghi nhận top thẻ tag</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Loading State for Static Features */}
+      {isLoadingStatic && (
+        <div className="animate-pulse space-y-4 py-6">
+          <div className="h-20 w-full rounded-xl bg-slate-100 backoffice-dark:bg-white/10" />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="h-24 rounded-xl bg-slate-100 backoffice-dark:bg-white/10" />
+            <div className="h-24 rounded-xl bg-slate-100 backoffice-dark:bg-white/10" />
+            <div className="h-24 rounded-xl bg-slate-100 backoffice-dark:bg-white/10" />
+          </div>
+        </div>
+      )}
+
+      {/* Error State */}
+      {isErrorStatic && (
+        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700 text-xs backoffice-dark:border-red-900/40 backoffice-dark:bg-red-950/40 backoffice-dark:text-red-300">
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <span>
+            Không thể tải MongoDB Features của tài khoản này:{" "}
+            {staticError instanceof Error ? staticError.message : "Đã có lỗi xảy ra."}
+          </span>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoadingStatic && !isErrorStatic && !userFeatures && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 py-10 px-4 text-center backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.02]">
+          <Database className="h-9 w-9 text-emerald-300 stroke-[1.5] backoffice-dark:text-white/20" />
+          <p className="mt-2 text-sm font-semibold text-slate-700 backoffice-dark:text-white">
+            Chưa có dữ liệu MongoDB Features cho tài khoản này
+          </p>
+        </div>
+      )}
+
+      {/* Main Content Area */}
+      {!isLoadingStatic && !isErrorStatic && userFeatures && (
+        <div className="space-y-6">
+          {/* Sub Navigation Tabs */}
+          <div className="flex items-center gap-2 border-b border-slate-200 text-xs font-semibold backoffice-dark:border-white/10">
+            <button
+              type="button"
+              onClick={() => setActiveTab("overview")}
+              className={`flex items-center gap-1.5 border-b-2 px-4 py-2.5 transition-all cursor-pointer ${activeTab === "overview"
+                ? "border-emerald-600 font-bold text-emerald-700 backoffice-dark:border-emerald-400 backoffice-dark:text-emerald-300"
+                : "border-transparent text-slate-500 hover:text-slate-900 backoffice-dark:text-white/60 backoffice-dark:hover:text-white"
+                }`}
+            >
+              <Activity className="h-4 w-4" />
+              <span>Tổng Quan & Tương Tác</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("genres")}
+              className={`flex items-center gap-1.5 border-b-2 px-4 py-2.5 transition-all cursor-pointer ${activeTab === "genres"
+                ? "border-emerald-600 font-bold text-emerald-700 backoffice-dark:border-emerald-400 backoffice-dark:text-emerald-300"
+                : "border-transparent text-slate-500 hover:text-slate-900 backoffice-dark:text-white/60 backoffice-dark:hover:text-white"
+                }`}
+            >
+              <FolderTree className="h-4 w-4" />
+              <span>Phân Tích Thể Loại ({Object.keys(userFeatures.preferences?.genresClicksRaw || {}).length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("tags")}
+              className={`flex items-center gap-1.5 border-b-2 px-4 py-2.5 transition-all cursor-pointer ${activeTab === "tags"
+                ? "border-emerald-600 font-bold text-emerald-700 backoffice-dark:border-emerald-400 backoffice-dark:text-emerald-300"
+                : "border-transparent text-slate-500 hover:text-slate-900 backoffice-dark:text-white/60 backoffice-dark:hover:text-white"
+                }`}
+            >
+              <Tag className="h-4 w-4" />
+              <span>Phân Tích Thẻ Tag ({Object.keys(userFeatures.preferences?.tagsClicksRaw || {}).length})</span>
+            </button>          </div>
+
+          {/* TAB 1: OVERVIEW & INTERACTIONS */}
+          {activeTab === "overview" && (
+            <div className="space-y-6">
+              {/* Demographics & Onboarding Card */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Basic Demographics */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.02]">
+                  <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-2 backoffice-dark:text-white/90 backoffice-dark:border-white/10">
+                    <User className="h-4 w-4 text-emerald-600" />
+                    Thông Tin Tài Khoản
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-slate-400 block text-[11px] backoffice-dark:text-white/50">Account ID</span>
+                      <span className="font-semibold text-slate-900 truncate block backoffice-dark:text-white">
+                        {accountId}
+                      </span>
+                      {userFeatures.accountId && userFeatures.accountId !== accountId && (
+                        <span className="text-[10px] text-amber-600 block">
+                          (Backend JSON: {userFeatures.accountId})
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px] backoffice-dark:text-white/50">Ngôn ngữ (Language)</span>
+                      <span className="font-semibold text-slate-900 flex items-center gap-1 backoffice-dark:text-white">
+                        <Globe className="h-3 w-3 text-slate-400" />
+                        {userFeatures.language || "en-US"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px] backoffice-dark:text-white/50">Giới tính (Gender)</span>
+                      <span className="font-semibold text-slate-900 backoffice-dark:text-white">
+                        {userFeatures.gender || "MALE"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px] backoffice-dark:text-white/50">Độ tuổi (Age)</span>
+                      <span className="font-semibold text-slate-900 backoffice-dark:text-white">
+                        {userFeatures.age || "MATURE"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Onboarding Preferences */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.02]">
+                  <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-2 backoffice-dark:text-white/90 backoffice-dark:border-white/10">
+                    <FolderTree className="h-4 w-4 text-emerald-600" />
+                    Sở Thích Khởi Tạo
+                  </h4>
+                  <div className="space-y-2.5 text-xs">
+                    <div>
+                      <span className="text-slate-400 block text-[11px] mb-1 backoffice-dark:text-white/50">
+                        Thể loại đã chọn:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {userFeatures.onboardingGenres?.map((g, i) => (
+                          <span
+                            key={i}
+                            className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 border border-emerald-200 backoffice-dark:bg-emerald-950/50 backoffice-dark:text-emerald-300 backoffice-dark:border-emerald-800"
+                          >
+                            {g}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 block text-[11px] mb-1 backoffice-dark:text-white/50">
+                        Thẻ Tag đã chọn:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {userFeatures.onboardingTags?.map((t, i) => (
+                          <span
+                            key={i}
+                            className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800 border border-indigo-200 backoffice-dark:bg-indigo-950/50 backoffice-dark:text-indigo-300 backoffice-dark:border-indigo-800"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Deep Engagement Watch Time Section */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.02]">
+                <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-2 backoffice-dark:text-white/90 backoffice-dark:border-white/10">
+                  <Clock className="h-4 w-4 text-emerald-600" />
+                  Thời Gian Xem
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="rounded-xl bg-emerald-50/70 p-3.5 border border-emerald-100 backoffice-dark:border-white/10 backoffice-dark:bg-emerald-950/20">
+                    <span className="text-xs font-medium text-emerald-700 block backoffice-dark:text-emerald-300">Tổng Thời Gian Xem</span>
+                    <span className="text-xl font-black text-emerald-900 block mt-1 backoffice-dark:text-emerald-100">
+                      {formatSeconds(userFeatures.deepEngagement?.totalWatchTime)}
+                    </span>
+                    <span className="text-[11px] text-emerald-600 font-medium backoffice-dark:text-emerald-400">
+                      ({userFeatures.deepEngagement?.totalWatchTime || 0}s)
+                    </span>
+                  </div>
+
+                  <div className="rounded-xl bg-sky-50/70 p-3.5 border border-sky-100 backoffice-dark:border-white/10 backoffice-dark:bg-sky-950/20">
+                    <span className="text-xs font-medium text-sky-700 block backoffice-dark:text-sky-300"> Thời Gian Xem 7 Ngày Gần Nhất</span>
+                    <span className="text-xl font-black text-sky-900 block mt-1 backoffice-dark:text-sky-100">
+                      {formatSeconds(userFeatures.deepEngagement?.watchTimeLast7d)}
+                    </span>
+                    <span className="text-[11px] text-sky-600 font-medium backoffice-dark:text-sky-400">
+                      ({userFeatures.deepEngagement?.watchTimeLast7d || 0}s)
+                    </span>
+                  </div>
+
+                  <div className="rounded-xl bg-violet-50/70 p-3.5 border border-violet-100 backoffice-dark:border-white/10 backoffice-dark:bg-violet-950/20">
+                    <span className="text-xs font-medium text-violet-700 block backoffice-dark:text-violet-300">Thời Gian Xem 24 Giờ Gần Nhất</span>
+                    <span className="text-xl font-black text-violet-900 block mt-1 backoffice-dark:text-violet-100">
+                      {formatSeconds(userFeatures.deepEngagement?.watchTimeLast24h)}
+                    </span>
+                    <span className="text-[11px] text-violet-600 font-medium backoffice-dark:text-violet-400">
+                      ({userFeatures.deepEngagement?.watchTimeLast24h || 0}s)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Interactions Breakdown & Ratios */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.02]">
+                <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-2 backoffice-dark:text-white/90 backoffice-dark:border-white/10">
+                  <BarChart3 className="h-4 w-4 text-emerald-600" />
+                  Thống Kê Tương Tác
+                </h4>
+
+                {/* Grid of Total, 7d, 24h Interaction Counts */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                  <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+                    <span className="flex items-center gap-1.5 text-slate-500 font-semibold mb-1 backoffice-dark:text-white/60">
+                      <MousePointer className="h-3.5 w-3.5 text-sky-500" />
+                      Lượt Clicks
+                    </span>
+                    <span className="text-lg font-bold text-slate-900 block backoffice-dark:text-white">
+                      {userFeatures.interactions?.totalClicks ?? 0}
+                    </span>
+                    <div className="mt-1 pt-1 border-t border-slate-200 text-[10px] text-slate-400 space-x-1 backoffice-dark:border-white/10 backoffice-dark:text-white/50">
+                      <span>7d: <b>{userFeatures.interactions?.clicksLast7d ?? 0}</b></span>
+                      <span>•</span>
+                      <span>24h: <b>{userFeatures.interactions?.clicksLast24h ?? 0}</b></span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+                    <span className="flex items-center gap-1.5 text-slate-500 font-semibold mb-1 backoffice-dark:text-white/60">
+                      <Heart className="h-3.5 w-3.5 text-rose-500" />
+                      Lượt Likes
+                    </span>
+                    <span className="text-lg font-bold text-slate-900 block backoffice-dark:text-white">
+                      {userFeatures.interactions?.totalLikes ?? 0}
+                    </span>
+                    <div className="mt-1 pt-1 border-t border-slate-200 text-[10px] text-slate-400 space-x-1 backoffice-dark:border-white/10 backoffice-dark:text-white/50">
+                      <span>7d: <b>{userFeatures.interactions?.likesLast7d ?? 0}</b></span>
+                      <span>•</span>
+                      <span>24h: <b>{userFeatures.interactions?.likesLast24h ?? 0}</b></span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+                    <span className="flex items-center gap-1.5 text-slate-500 font-semibold mb-1 backoffice-dark:text-white/60">
+                      <Bookmark className="h-3.5 w-3.5 text-amber-500" />
+                      Lượt Bookmarks
+                    </span>
+                    <span className="text-lg font-bold text-slate-900 block backoffice-dark:text-white">
+                      {userFeatures.interactions?.totalBookmarks ?? 0}
+                    </span>
+                    <div className="mt-1 pt-1 border-t border-slate-200 text-[10px] text-slate-400 space-x-1 backoffice-dark:border-white/10 backoffice-dark:text-white/50">
+                      <span>7d: <b>{userFeatures.interactions?.bookmarksLast7d ?? 0}</b></span>
+                      <span>•</span>
+                      <span>24h: <b>{userFeatures.interactions?.bookmarksLast24h ?? 0}</b></span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+                    <span className="flex items-center gap-1.5 text-slate-500 font-semibold mb-1 backoffice-dark:text-white/60">
+                      <Share2 className="h-3.5 w-3.5 text-indigo-500" />
+                      Lượt Shares
+                    </span>
+                    <span className="text-lg font-bold text-slate-900 block backoffice-dark:text-white">
+                      {userFeatures.interactions?.totalShares ?? 0}
+                    </span>
+                    <div className="mt-1 pt-1 border-t border-slate-200 text-[10px] text-slate-400 space-x-1 backoffice-dark:border-white/10 backoffice-dark:text-white/50">
+                      <span>7d: <b>{userFeatures.interactions?.sharesLast7d ?? 0}</b></span>
+                      <span>•</span>
+                      <span>24h: <b>{userFeatures.interactions?.sharesLast24h ?? 0}</b></span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] col-span-2 sm:col-span-1">
+                    <span className="flex items-center gap-1.5 text-slate-500 font-semibold mb-1 backoffice-dark:text-white/60">
+                      <MessageSquare className="h-3.5 w-3.5 text-emerald-500" />
+                      Lượt Comments
+                    </span>
+                    <span className="text-lg font-bold text-slate-900 block backoffice-dark:text-white">
+                      {Math.max(0, userFeatures.interactions?.totalComments ?? 0)}
+                    </span>
+                    <div className="mt-1 pt-1 border-t border-slate-200 text-[10px] text-slate-400 space-x-1 backoffice-dark:border-white/10 backoffice-dark:text-white/50">
+                      <span>7d: <b>{Math.max(0, userFeatures.interactions?.commentsLast7d ?? 0)}</b></span>
+                      <span>•</span>
+                      <span>24h: <b>{Math.max(0, userFeatures.interactions?.commentsLast24h ?? 0)}</b></span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Conversion Ratios Breakdown */}
+                <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white backoffice-dark:border-white/10 backoffice-dark:bg-white/5">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-700 backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white/80">
+                        <th className="py-2.5 px-4">Tỷ lệ Tương Tác</th>
+                        <th className="py-2.5 px-4 text-center">Toàn thời gian</th>
+                        <th className="py-2.5 px-4 text-center">7 Ngày Gần Đây</th>
+                        <th className="py-2.5 px-4 text-center">24 Giờ Gần Đây</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 backoffice-dark:divide-white/10">
+                      <tr>
+                        <td className="py-2.5 px-4 font-sans font-semibold text-slate-900 backoffice-dark:text-white">Like / Click Ratio</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.likeToClickRatio)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.likeToClickRatioLast7d)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.likeToClickRatioLast24h)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-4 font-sans font-semibold text-slate-900 backoffice-dark:text-white">Bookmark / Click Ratio</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.bookmarkToClickRatio)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.bookmarkToClickRatioLast7d)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.bookmarkToClickRatioLast24h)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-4 font-sans font-semibold text-slate-900 backoffice-dark:text-white">Share / Click Ratio</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.shareToClickRatio)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.shareToClickRatioLast7d)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.shareToClickRatioLast24h)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-4 font-sans font-semibold text-slate-900 backoffice-dark:text-white">Comment / Click Ratio</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.commentToClickRatio)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.commentToClickRatioLast7d)}</td>
+                        <td className="py-2.5 px-4 text-center font-bold text-slate-800 backoffice-dark:text-white/80">{formatPercentage(userFeatures.interactions?.commentToClickRatioLast24h)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: GENRES PREFERENCES */}
+          {activeTab === "genres" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2 backoffice-dark:border-white/10">
+                <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-2 backoffice-dark:text-white/90">
+                  <FolderTree className="h-4 w-4 text-emerald-600" />
+                  Phân Tích Chi Tiết Trọng Số Thể Loại
+                </h4>
+
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white backoffice-dark:border-white/10 backoffice-dark:bg-white/5">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-700 backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white/80">
+                      <th className="py-2.5 px-4">Thể Loại</th>
+                      <th className="py-2.5 px-4 text-center">Lượt Click</th>
+                      <th className="py-2.5 px-4 text-center">Thời Gian Xem</th>
+                      <th className="py-2.5 px-4">Trọng Số Lượt Click (%)</th>
+                      <th className="py-2.5 px-4">Trọng Số Thời Gian Xem (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 backoffice-dark:divide-white/10">
+                    {paginatedGenresKeys.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-slate-400 italic">
+                          Chưa có dữ liệu phân tích thể loại
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedGenresKeys.map((genreKey) => {
+                        const rawClick = userFeatures.preferences?.genresClicksRaw?.[genreKey] ?? 0;
+                        const rawTime = userFeatures.preferences?.genresWatchTimeRaw?.[genreKey] ?? 0;
+                        const prefClick = userFeatures.preferences?.preferredGenresByClicks?.[genreKey] ?? 0;
+                        const prefTime = userFeatures.preferences?.preferredGenresByWatchTime?.[genreKey] ?? 0;
+
+                        return (
+                          <tr key={genreKey} className="hover:bg-slate-50 backoffice-dark:hover:bg-white/5">
+                            <td className="py-2.5 px-4 font-bold text-slate-900 backoffice-dark:text-white">
+                              {genreKey}
+                            </td>
+                            <td className="py-2.5 px-4 text-center font-semibold text-slate-800 backoffice-dark:text-white/80">
+                              {rawClick}
+                            </td>
+                            <td className="py-2.5 px-4 text-center font-semibold text-slate-800 backoffice-dark:text-white/80">
+                              {formatSeconds(rawTime)} ({rawTime}s)
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-violet-700 w-12 text-right backoffice-dark:text-violet-300">
+                                  {formatPercentage(prefClick)}
+                                </span>
+                                <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden min-w-[60px] backoffice-dark:bg-white/10">
+                                  <div
+                                    className="h-full bg-violet-600 rounded-full"
+                                    style={{ width: `${Math.min(prefClick * 100, 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-emerald-700 w-12 text-right backoffice-dark:text-emerald-300">
+                                  {formatPercentage(prefTime)}
+                                </span>
+                                <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden min-w-[60px] backoffice-dark:bg-white/10">
+                                  <div
+                                    className="h-full bg-emerald-600 rounded-full"
+                                    style={{ width: `${Math.min(prefTime * 100, 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination Controls for Genres */}
+              {totalGenresPages > 1 && (
+                <div className="flex items-center justify-between border-t border-slate-100 pt-3 text-xs backoffice-dark:border-white/10">
+                  <span className="text-slate-500 font-medium backoffice-dark:text-white/60">
+                    Hiển thị {((genresPage - 1) * GENRES_PAGE_SIZE) + 1} - {Math.min(genresPage * GENRES_PAGE_SIZE, sortedGenresKeys.length)} trên {sortedGenresKeys.length} thể loại
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={genresPage <= 1}
+                      onClick={() => setGenresPage((prev) => Math.max(1, prev - 1))}
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white backoffice-dark:hover:bg-slate-700"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      <span>Trước</span>
+                    </button>
+
+                    <span className="px-2 font-bold text-slate-800 backoffice-dark:text-white">
+                      {genresPage} / {totalGenresPages}
+                    </span>
+
+                    <button
+                      type="button"
+                      disabled={genresPage >= totalGenresPages}
+                      onClick={() => setGenresPage((prev) => Math.min(totalGenresPages, prev + 1))}
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white backoffice-dark:hover:bg-slate-700"
+                    >
+                      <span>Sau</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: TAGS PREFERENCES */}
+          {activeTab === "tags" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2 backoffice-dark:border-white/10">
+                <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-2 backoffice-dark:text-white/90">
+                  <Tag className="h-4 w-4 text-emerald-600" />
+                  Phân Tích Chi Tiết Trọng Số Thẻ Tag
+                </h4>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white backoffice-dark:border-white/10 backoffice-dark:bg-white/5">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-700 backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white/80">
+                      <th className="py-2.5 px-4">Thẻ Tag</th>
+                      <th className="py-2.5 px-4 text-center">Lượt Click</th>
+                      <th className="py-2.5 px-4 text-center">Thời Gian Xem</th>
+                      <th className="py-2.5 px-4">Trọng Số Lượt Click (%)</th>
+                      <th className="py-2.5 px-4">Trọng Số Thời Gian Xem (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 backoffice-dark:divide-white/10">
+                    {paginatedTagsKeys.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-slate-400 italic">
+                          Chưa có dữ liệu phân tích thẻ tag
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedTagsKeys.map((tagKey) => {
+                        const rawClick = userFeatures.preferences?.tagsClicksRaw?.[tagKey] ?? 0;
+                        const rawTime = userFeatures.preferences?.tagsWatchTimeRaw?.[tagKey] ?? 0;
+                        const prefClick = userFeatures.preferences?.preferredTagsByClicks?.[tagKey] ?? 0;
+                        const prefTime = userFeatures.preferences?.preferredTagsByWatchTime?.[tagKey] ?? 0;
+
+                        return (
+                          <tr key={tagKey} className="hover:bg-slate-50 backoffice-dark:hover:bg-white/5">
+                            <td className="py-2.5 px-4 font-bold text-slate-900 backoffice-dark:text-white">
+                              {tagKey}
+                            </td>
+                            <td className="py-2.5 px-4 text-center font-semibold text-slate-800 backoffice-dark:text-white/80">
+                              {rawClick}
+                            </td>
+                            <td className="py-2.5 px-4 text-center font-semibold text-slate-800 backoffice-dark:text-white/80">
+                              {formatSeconds(rawTime)} ({rawTime}s)
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-indigo-700 w-12 text-right backoffice-dark:text-indigo-300">
+                                  {formatPercentage(prefClick)}
+                                </span>
+                                <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden min-w-[60px] backoffice-dark:bg-white/10">
+                                  <div
+                                    className="h-full bg-indigo-600 rounded-full"
+                                    style={{ width: `${Math.min(prefClick * 100, 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-teal-700 w-12 text-right backoffice-dark:text-teal-300">
+                                  {formatPercentage(prefTime)}
+                                </span>
+                                <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden min-w-[60px] backoffice-dark:bg-white/10">
+                                  <div
+                                    className="h-full bg-teal-600 rounded-full"
+                                    style={{ width: `${Math.min(prefTime * 100, 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination Controls for Tags */}
+              {totalTagsPages > 1 && (
+                <div className="flex items-center justify-between border-t border-slate-100 pt-3 text-xs backoffice-dark:border-white/10">
+                  <span className="text-slate-500 font-medium backoffice-dark:text-white/60">
+                    Hiển thị {((tagsPage - 1) * TAGS_PAGE_SIZE) + 1} - {Math.min(tagsPage * TAGS_PAGE_SIZE, sortedTagsKeys.length)} trên {sortedTagsKeys.length} thẻ tag
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={tagsPage <= 1}
+                      onClick={() => setTagsPage((prev) => Math.max(1, prev - 1))}
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white backoffice-dark:hover:bg-slate-700"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      <span>Trước</span>
+                    </button>
+
+                    <span className="px-2 font-bold text-slate-800 backoffice-dark:text-white">
+                      {tagsPage} / {totalTagsPages}
+                    </span>
+
+                    <button
+                      type="button"
+                      disabled={tagsPage >= totalTagsPages}
+                      onClick={() => setTagsPage((prev) => Math.min(totalTagsPages, prev + 1))}
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer backoffice-dark:border-white/10 backoffice-dark:bg-slate-800 backoffice-dark:text-white backoffice-dark:hover:bg-slate-700"
+                    >
+                      <span>Sau</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+
+        </div>
+      )}
+    </div>
+  );
+}

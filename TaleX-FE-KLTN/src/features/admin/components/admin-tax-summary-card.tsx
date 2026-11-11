@@ -1,0 +1,392 @@
+"use client";
+
+import { useState } from "react";
+import {
+  Building2,
+  ChevronDown,
+  Download,
+  FileCheck2,
+  MapPin,
+  Receipt,
+  RefreshCw,
+  Scale,
+  PieChart as PieIcon,
+  DollarSign,
+  TrendingUp,
+} from "lucide-react";
+import { toast } from "sonner";
+import {
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+} from "recharts";
+
+import { useAdminTaxSummary } from "@/features/admin/hooks/use-admin-tax-summary";
+import {
+  exportBk052Excel,
+  exportVatExcel,
+  triggerFileDownload,
+} from "@/features/admin/api/admin-tax.api";
+
+function formatVND(value: number = 0): string {
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatNumber(value: number = 0): string {
+  return new Intl.NumberFormat("vi-VN").format(value);
+}
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i);
+
+const VAT_DONUT_COLORS = ["#8b5cf6", "#3b82f6"]; // Creator VAT (violet-500), Platform VAT (blue-500)
+
+export function AdminTaxSummaryCard() {
+  const [selectedYear, setSelectedYear] = useState<number>(CURRENT_YEAR);
+  const [selectedQuarter, setSelectedQuarter] = useState<number | undefined>(undefined);
+  const [isExportingVat, setIsExportingVat] = useState<boolean>(false);
+  const [isExportingPit, setIsExportingPit] = useState<boolean>(false);
+
+  const query = useAdminTaxSummary({
+    year: selectedYear,
+    quarter: selectedQuarter,
+  });
+
+  const summary = query.data;
+
+  const handleExportVat = async () => {
+    try {
+      setIsExportingVat(true);
+      const blob = await exportVatExcel();
+      triggerFileDownload(
+        blob,
+        `Bang_Ke_Thue_VAT_Ban_Ra_${new Date().toISOString().slice(0, 10)}.xlsx`
+      );
+      toast.success("Đã tải file Excel Bảng kê Thuế VAT Bán ra!");
+    } catch {
+      toast.error("Không thể xuất file Excel VAT.");
+    } finally {
+      setIsExportingVat(false);
+    }
+  };
+
+  const handleExportPit = async () => {
+    try {
+      setIsExportingPit(true);
+      const blob = await exportBk052Excel(selectedYear);
+      triggerFileDownload(
+        blob,
+        `Bang_Ke_05_2_BK_TNCN_Nam_${selectedYear}.xlsx`
+      );
+      toast.success(`Đã tải Bảng kê 05-2/BK-TNCN năm ${selectedYear}!`);
+    } catch {
+      toast.error("Không thể xuất file Excel Bảng kê 05-2/BK-TNCN.");
+    } finally {
+      setIsExportingPit(false);
+    }
+  };
+
+  // Donut chart data
+  const creatorVat = summary?.creatorVatAmount ?? 0;
+  const platformVat = summary?.platformVatAmount ?? 0;
+  const donutData = [
+    { name: "VAT từ Gói Bán Lẻ & Combo", value: creatorVat },
+    { name: "VAT từ Gói Dịch Vụ của Nền Tảng", value: platformVat },
+  ];
+
+  return (
+    <div className="w-full space-y-6 max-w-7xl mx-auto font-sans">
+      {/* 1. Header Card with Year/Quarter Selectors & Quick Download Buttons */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04]">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-gray-100 backoffice-dark:border-white/10">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 backoffice-dark:text-white tracking-tight flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-violet-600" />
+              Tổng Quan Nghĩa Vụ Thuế
+            </h2>
+            <p className="mt-1 text-xs text-gray-500 backoffice-dark:text-white/60">
+              Tổng hợp số liệu thuế VAT và PIT khấu trừ năm {selectedYear}
+            </p>
+          </div>
+
+          {/* Controls & Export Buttons */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative inline-flex items-center">
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="appearance-none bg-white backoffice-dark:bg-slate-900 border border-gray-200 backoffice-dark:border-white/10 rounded-xl px-4 py-2 pr-9 text-xs sm:text-sm font-bold text-gray-800 backoffice-dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500 cursor-pointer shadow-sm hover:border-gray-300"
+              >
+                {YEAR_OPTIONS.map((year) => (
+                  <option key={year} value={year} className="bg-white text-gray-900 backoffice-dark:bg-slate-900 backoffice-dark:text-white">
+                    Năm {year}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-gray-500 absolute right-3 pointer-events-none" />
+            </div>
+
+            <div className="relative inline-flex items-center">
+              <select
+                value={selectedQuarter ?? ""}
+                onChange={(e) =>
+                  setSelectedQuarter(
+                    e.target.value ? Number(e.target.value) : undefined
+                  )
+                }
+                className="appearance-none bg-white backoffice-dark:bg-slate-900 border border-gray-200 backoffice-dark:border-white/10 rounded-xl px-3.5 py-2 pr-8 text-xs font-bold text-gray-800 backoffice-dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500 cursor-pointer shadow-sm hover:border-gray-300"
+              >
+                <option value="" className="bg-white text-gray-900 backoffice-dark:bg-slate-900 backoffice-dark:text-white">Tất cả các quý</option>
+                <option value="1" className="bg-white text-gray-900 backoffice-dark:bg-slate-900 backoffice-dark:text-white">Quý 1</option>
+                <option value="2" className="bg-white text-gray-900 backoffice-dark:bg-slate-900 backoffice-dark:text-white">Quý 2</option>
+                <option value="3" className="bg-white text-gray-900 backoffice-dark:bg-slate-900 backoffice-dark:text-white">Quý 3</option>
+                <option value="4" className="bg-white text-gray-900 backoffice-dark:bg-slate-900 backoffice-dark:text-white">Quý 4</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-gray-500 absolute right-2.5 pointer-events-none" />
+            </div>
+
+            {/* Quick Export VAT Excel */}
+            <button
+              type="button"
+              onClick={handleExportVat}
+              disabled={isExportingVat}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+            >
+              {isExportingVat ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              Xuất Excel VAT
+            </button>
+
+            {/* Quick Export PIT 05-2 Excel */}
+            <button
+              type="button"
+              onClick={handleExportPit}
+              disabled={isExportingPit}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-50 cursor-pointer"
+            >
+              {isExportingPit ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              Xuất Bảng Kê PIT
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Top Row of 4 KPI Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Total VAT */}
+        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] transition hover:shadow-md">
+          <div className="h-10 w-10 rounded-xl bg-purple-50 flex items-center justify-center mb-4 backoffice-dark:bg-purple-500/20">
+            <Receipt className="h-5 w-5 text-purple-600 backoffice-dark:text-purple-300" />
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 backoffice-dark:text-white/60 mb-1">
+            Tổng Thuế VAT
+          </p>
+          <h3 className="text-2xl font-bold text-gray-900 backoffice-dark:text-white">
+            {formatVND(summary?.totalVatAmount)}
+          </h3>
+        </div>
+
+        {/* Gross Amount */}
+        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] transition hover:shadow-md">
+          <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center mb-4 backoffice-dark:bg-blue-500/20">
+            <TrendingUp className="h-5 w-5 text-blue-600 backoffice-dark:text-blue-300" />
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 backoffice-dark:text-white/60 mb-1">
+            Tổng Thu Nhập Các Nhà Sáng Tạo
+          </p>
+          <h3 className="text-2xl font-bold text-gray-900 backoffice-dark:text-white">
+            {formatVND(summary?.totalGrossAmount)}
+          </h3>
+        </div>
+
+        {/* PIT Withheld */}
+        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] transition hover:shadow-md">
+          <div className="h-10 w-10 rounded-xl bg-rose-50 flex items-center justify-center mb-4 backoffice-dark:bg-rose-500/20">
+            <Scale className="h-5 w-5 text-rose-600 backoffice-dark:text-rose-300" />
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 backoffice-dark:text-white/60 mb-1">
+            Thuế TNCN (PIT) Khấu Trừ
+          </p>
+          <h3 className="text-2xl font-bold text-gray-900 backoffice-dark:text-white">
+            {formatVND(summary?.totalPitWithheld)}
+          </h3>
+        </div>
+
+        {/* Net Payout */}
+        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] transition hover:shadow-md">
+          <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center mb-4 backoffice-dark:bg-emerald-500/20">
+            <DollarSign className="h-5 w-5 text-emerald-600 backoffice-dark:text-emerald-300" />
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 backoffice-dark:text-white/60 mb-1">
+            Tổng Thực Nhận
+          </p>
+          <h3 className="text-2xl font-bold text-gray-900 backoffice-dark:text-white">
+            {formatVND(summary?.totalNetPayout)}
+          </h3>
+        </div>
+      </div>
+
+      {/* 3. Bottom Row: 2 Split Columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left Column: Phân Rã Thuế VAT (DONUT Chart) */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] flex flex-col justify-between">
+          <div className="border-b border-gray-100 pb-3 mb-4 flex items-center justify-between backoffice-dark:border-white/10">
+            <h3 className="text-base font-bold text-gray-900 backoffice-dark:text-white flex items-center gap-2">
+              <PieIcon className="w-4 h-4 text-violet-600" />
+              Phân Rã Thuế VAT
+            </h3>
+          </div>
+
+          {/* Donut Chart with Centered Overlay */}
+          <div className="relative flex flex-col items-center justify-center my-2">
+            <div className="w-full h-48 sm:h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={donutData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={62}
+                    outerRadius={88}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {donutData.map((_, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={VAT_DONUT_COLORS[index % VAT_DONUT_COLORS.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip
+                    wrapperStyle={{ zIndex: 100 }}
+                    formatter={(value: any, name: any) => [
+                      formatVND(Number(value) || 0),
+                      name,
+                    ]}
+                    contentStyle={{
+                      borderRadius: "12px",
+                      border: "1px solid #E5E7EB",
+                      boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      backgroundColor: "rgba(255, 255, 255, 0.95)",
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Centered Total Overlay inside Donut hole */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10 text-center">
+              <span className="text-[11px] font-bold tracking-wider uppercase text-gray-500 backoffice-dark:text-white/60">
+                TỔNG VAT
+              </span>
+              <span className="text-sm sm:text-base font-black text-violet-600 backoffice-dark:text-violet-400">
+                {formatVND(summary?.totalVatAmount)}
+              </span>
+            </div>
+          </div>
+
+          {/* Donut Breakdown Legend Table */}
+          <div className="border-t border-gray-100 pt-4 mt-2 space-y-2.5 backoffice-dark:border-white/10">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 font-medium text-gray-700 backoffice-dark:text-white/80">
+                <span className="w-3 h-3 rounded-full bg-violet-500 inline-block" />
+                <span>VAT từ Gói Bán Lẻ & Combo</span>
+              </div>
+              <span className="font-bold text-gray-900 backoffice-dark:text-white">
+                {formatVND(summary?.creatorVatAmount)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 font-medium text-gray-700 backoffice-dark:text-white/80">
+                <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" />
+                <span>VAT từ Gói Dịch Vụ của Nền Tảng</span>
+              </div>
+              <span className="font-bold text-gray-900 backoffice-dark:text-white">
+                {formatVND(summary?.platformVatAmount)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Tóm Tắt Quyết Toán (Key-Value List) */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm backoffice-dark:border-white/10 backoffice-dark:bg-white/[0.04] flex flex-col justify-between">
+          <div className="border-b border-gray-100 pb-3 mb-4 backoffice-dark:border-white/10">
+            <h3 className="text-base font-bold text-gray-900 backoffice-dark:text-white flex items-center gap-2">
+              <Scale className="w-4 h-4 text-violet-600" />
+              Tóm Tắt Quyết Toán
+            </h3>
+          </div>
+
+          <div className="divide-y divide-gray-100 backoffice-dark:divide-white/10 my-auto">
+            <div className="py-3 flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-600 backoffice-dark:text-white/70">
+                Tổng Thuế VAT
+              </span>
+              <span className="font-extrabold text-gray-900 backoffice-dark:text-white">
+                {formatVND(summary?.totalVatAmount)}
+              </span>
+            </div>
+
+            <div className="py-3 flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-600 backoffice-dark:text-white/70">
+                Tổng Thu Nhập Các Nhà Sáng Tạo
+              </span>
+              <span className="font-extrabold text-gray-900 backoffice-dark:text-white">
+                {formatVND(summary?.totalGrossAmount)}
+              </span>
+            </div>
+
+            <div className="py-3 flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-600 backoffice-dark:text-white/70">
+                Thuế TNCN (PIT) Khấu Trừ
+              </span>
+              <span className="font-extrabold text-gray-900 backoffice-dark:text-white">
+                {formatVND(summary?.totalPitWithheld)}
+              </span>
+            </div>
+
+            <div className="py-3 flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-600 backoffice-dark:text-white/70">
+                Tổng Thực Nhận
+              </span>
+              <span className="font-extrabold text-gray-900 backoffice-dark:text-white">
+                {formatVND(summary?.totalNetPayout)}
+              </span>
+            </div>
+
+            <div className="py-3 flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-600 backoffice-dark:text-white/70">
+                Số Kỳ Quyết Toán
+              </span>
+              <span className="font-extrabold text-gray-900 backoffice-dark:text-white">
+                {formatNumber(summary?.totalSettlementsCount)}
+              </span>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4 mt-4 text-[11px] text-gray-400 font-medium flex items-center justify-between">
+            <span>Báo Cáo Tổng Quan Thuế Enterprise</span>
+            <span>Trạng thái: Hoàn tất đối soát</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

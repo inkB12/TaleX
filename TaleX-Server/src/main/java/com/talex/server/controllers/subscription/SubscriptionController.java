@@ -1,0 +1,122 @@
+package com.talex.server.controllers.subscription;
+
+import com.talex.server.dtos.BasePageResponse;
+import com.talex.server.dtos.BaseResponse;
+import com.talex.server.dtos.subscription.request.SubscriptionRequestDto;
+import com.talex.server.dtos.requests.filters.SubscriptionFilterRequestDto;
+import com.talex.server.dtos.subscription.response.CreatorPoolSummaryResponseDto;
+import com.talex.server.dtos.subscription.response.SubscriptionResponseDto;
+import com.talex.server.services.subscription.SubscriptionService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/v1/subscriptions")
+@RequiredArgsConstructor
+@Tag(name = "Subscriptions", description = "API quản lý các gói đăng ký")
+public class SubscriptionController {
+    private final SubscriptionService subscriptionService;
+
+    @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
+    @Operation(summary = "Tạo gói đăng ký mới", description = "Tạo gói đăng ký mới. Chỉ Admin/Staff.")
+    public ResponseEntity<BaseResponse> create(@Valid @RequestBody SubscriptionRequestDto request) {
+        SubscriptionResponseDto response = subscriptionService.createSubscription(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(BaseResponse.builder()
+                        .code(201)
+                        .message("Subscription created")
+                        .data(response)
+                        .build());
+    }
+
+    @GetMapping
+    @Operation(summary = "Tìm kiếm/Lọc các gói đăng ký", description = "Tìm kiếm và phân trang các gói đăng ký theo tiêu chí lọc.")
+    public ResponseEntity<BaseResponse> list(
+            @RequestParam(required = false) Map<String, Object> criteria,
+            @RequestParam(required = false) String[] durationUnits,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDirection,
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "20") Integer pageSize
+    ) {
+        BasePageResponse<SubscriptionResponseDto> pageResponse = subscriptionService
+                .filterSubscriptions(SubscriptionFilterRequestDto.builder()
+                        .criteria(criteria)
+                        .durationUnits(durationUnits == null ? new String[0] : durationUnits)
+                        .sortBy(sortBy)
+                        .sortDirection(sortDirection)
+                        .page(page)
+                        .pageSize(pageSize)
+                        .build());
+        return ResponseEntity.ok(BaseResponse.builder()
+                .code(200)
+                .message("OK")
+                .data(pageResponse)
+                .build());
+    }
+
+    @GetMapping("/{subscriptionId}")
+    @Operation(summary = "Lấy gói đăng ký theo ID", description = "Trả về thông tin gói đăng ký theo ID.")
+    public ResponseEntity<BaseResponse> getById(@PathVariable String subscriptionId) {
+        SubscriptionResponseDto response = subscriptionService
+                .getSubscriptionById(subscriptionId);
+        return ResponseEntity.ok(BaseResponse.builder()
+                .code(200)
+                .message("OK")
+                .data(response)
+                .build());
+    }
+
+    @PutMapping("/{subscriptionId}")
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
+    @Operation(summary = "Cập nhật thông tin gói đăng ký", description = "Cập nhật thông tin gói đăng ký theo ID. Chỉ Admin/Staff.")
+    public ResponseEntity<BaseResponse> update(
+            @PathVariable String subscriptionId,
+            @Valid @RequestBody SubscriptionRequestDto request) {
+        SubscriptionResponseDto response = subscriptionService.updateSubscription(subscriptionId, request);
+        return ResponseEntity.ok(BaseResponse.builder()
+                .code(200)
+                .message("Subscription updated")
+                .data(response)
+                .build());
+    }
+
+    @DeleteMapping("/{subscriptionId}")
+    @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
+    @Operation(summary = "Xóa gói đăng ký", description = "Xóa gói đăng ký theo ID. Chỉ Admin/Staff.")
+    public ResponseEntity<BaseResponse> delete(@PathVariable String subscriptionId) {
+        subscriptionService.deleteSubscription(subscriptionId);
+        return ResponseEntity.ok(BaseResponse.builder()
+                .code(200)
+                .message("Subscription deleted")
+                .data(null)
+                .build());
+    }
+
+    @GetMapping("/pool-summary")
+    @Operation(
+            summary = "Tính tổng tiền pool chia cho nhà sáng tạo",
+            description = "Lấy tổng tiền gốc, tiền thuế và tiền thực nhận (fiat_amount) của các gói đăng ký có endTime trong tháng/năm yêu cầu."
+    )
+    public ResponseEntity<BaseResponse> getCreatorPoolSummary(
+            @RequestParam(defaultValue = "2026") int year,
+            @RequestParam int month,
+            @RequestParam String subscriptionId
+    ) {
+        CreatorPoolSummaryResponseDto summary = subscriptionService.getCreatorPoolSummary(year, month, subscriptionId);
+        return ResponseEntity.ok(BaseResponse.builder()
+                .code(200)
+                .message("OK")
+                .data(summary)
+                .build());
+    }
+}

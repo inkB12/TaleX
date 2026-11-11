@@ -1,0 +1,423 @@
+package com.talex.server.exceptions;
+
+import com.talex.server.dtos.BaseResponse;
+import com.talex.server.exceptions.codes.*;
+import com.talex.server.exceptions.codes.kyc.KycSessionErrorCode;
+import com.talex.server.exceptions.codes.payment.PaymentErrorCode;
+import com.talex.server.exceptions.details.*;
+import com.talex.server.exceptions.details.campaign.CampaignException;
+import com.talex.server.exceptions.details.campaign.CampaignSeriesException;
+import com.talex.server.exceptions.details.campaign.EngagementServiceException;
+import com.talex.server.exceptions.details.creator.CreatorException;
+import com.talex.server.exceptions.details.creator.CreatorIdentityException;
+import com.talex.server.exceptions.details.creator.CreatorTermsLogException;
+import com.talex.server.exceptions.details.creator.CreatorTierException;
+import com.talex.server.exceptions.details.kyc.FptAIIDRecognitionException;
+import com.talex.server.exceptions.details.kyc.KycSessionException;
+import com.talex.server.exceptions.details.kyc.KycStepException;
+import com.talex.server.exceptions.details.payment.PaymentException;
+import com.talex.server.exceptions.details.payment.PaymentProfileException;
+import com.talex.server.exceptions.details.report.ModerationException;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.TypeMismatchException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.mail.MailException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
+
+import java.util.Locale;
+import java.util.stream.Collectors;
+
+@RestControllerAdvice
+@Slf4j
+public class ExceptionGlobalHandler {
+    @ExceptionHandler(ModerationException.class)
+    public ResponseEntity<BaseResponse> handleModerationException(ModerationException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(AuthException.class)
+    public ResponseEntity<BaseResponse> handleAuthException(AuthException ex, WebRequest request) {
+        AuthErrorCode errorCode = ex.getErrorCode();
+        log.warn("Auth error [{}]: {}", errorCode.getCode(), ex.getMessage());
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(errorCode.getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, errorCode.getHttpStatus());
+    }
+
+    @ExceptionHandler(AdminAccountException.class)
+    public ResponseEntity<BaseResponse> handleAdminAccountException(AdminAccountException ex, WebRequest request) {
+        AdminAccountErrorCode errorCode = ex.getErrorCode();
+        log.warn("Admin account error [{}]: {}", errorCode.getCode(), ex.getMessage());
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(errorCode.getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, errorCode.getHttpStatus());
+    }
+
+    @ExceptionHandler(ContentModuleException.class)
+    public ResponseEntity<BaseResponse> handleContentModuleException(ContentModuleException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getHttpStatus());
+    }
+
+    @ExceptionHandler(InteractionException.class)
+    public ResponseEntity<BaseResponse> handleInteractionException(InteractionException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(FptAIIDRecognitionException.class)
+    public ResponseEntity<BaseResponse> handleFptAIIDRecognitionException(FptAIIDRecognitionException ex,
+            WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(CreatorException.class)
+    public ResponseEntity<BaseResponse> handleCreatorException(CreatorException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(CreatorTermsLogException.class)
+    public ResponseEntity<BaseResponse> handleCreatorTermsLogException(CreatorTermsLogException ex,
+            WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(CampaignSeriesException.class)
+    public ResponseEntity<BaseResponse> handleCampaignSeriesException(CampaignSeriesException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(KycStepException.class)
+    public ResponseEntity<BaseResponse> handleKycStepException(KycStepException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(KycSessionException.class)
+    public ResponseEntity<BaseResponse> handleKYCSessionException(KycSessionException ex, WebRequest request) {
+        KycSessionErrorCode errorCode = ex.getErrorCode();
+
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(errorCode.getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, errorCode.getHttpStatus());
+    }
+
+    @ExceptionHandler(SubscriptionException.class)
+    public ResponseEntity<BaseResponse> handleSubscriptionException(SubscriptionException ex, WebRequest request) {
+        SubscriptionErrorCode errorCode = ex.getErrorCode();
+
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(errorCode.getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, errorCode.getHttpStatus());
+    }
+
+    @ExceptionHandler(PaymentException.class)
+    public ResponseEntity<BaseResponse> handlePaymentException(PaymentException ex, WebRequest request) {
+        PaymentErrorCode errorCode = ex.getErrorCode();
+        log.warn("Payment error [{}]: {}", errorCode.getCode(), ex.getMessage());
+
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(errorCode.getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, errorCode.getHttpStatus());
+    }
+
+    @ExceptionHandler(CoinException.class)
+    public ResponseEntity<BaseResponse> handleCoinException(CoinException ex, WebRequest request) {
+        CoinErrorCode errorCode = ex.getErrorCode();
+        log.warn("Coin error [{}]: {}", errorCode.getCode(), ex.getMessage());
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(errorCode.getCode())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, errorCode.getHttpStatus());
+    }
+
+    @ExceptionHandler(TermVersionException.class)
+    public ResponseEntity<BaseResponse> handleTermVersionException(TermVersionException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(CreatorTierException.class)
+    public ResponseEntity<BaseResponse> handleCreatorTierException(CreatorTierException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(PaymentProfileException.class)
+    public ResponseEntity<BaseResponse> handlePaymentProfileException(PaymentProfileException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(CampaignException.class)
+    public ResponseEntity<BaseResponse> handleCampaignException(CampaignException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(MongoDocumentException.class)
+    public ResponseEntity<BaseResponse> handleMongoDocumentException(MongoDocumentException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(EngagementServiceException.class)
+    public ResponseEntity<BaseResponse> handleEngagementServiceException(EngagementServiceException ex,
+            WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<BaseResponse> handleMaxSizeException(MaxUploadSizeExceededException exc) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(new BaseResponse(413, "File vượt quá giới hạn tối đa cho phép của toàn hệ thống!", null));
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<BaseResponse> handleValidationException(ConstraintViolationException ex) {
+        String errorMsg = ex.getConstraintViolations().stream()
+                .map(ConstraintViolation::getMessage)
+                .findFirst()
+                .orElse("File không hợp lệ!");
+
+        return ResponseEntity.badRequest().body(new BaseResponse(400, errorMsg, null));
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<BaseResponse> handleMissingRequestParameter(MissingServletRequestParameterException ex) {
+        String message = "Missing required request parameter: " + ex.getParameterName();
+        return ResponseEntity.badRequest().body(new BaseResponse(400, message, null));
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<BaseResponse> handleMissingRequestPart(MissingServletRequestPartException ex) {
+        String message = "Missing required multipart part: " + ex.getRequestPartName();
+        return ResponseEntity.badRequest().body(new BaseResponse(400, message, null));
+    }
+
+    @ExceptionHandler(TypeMismatchException.class)
+    public ResponseEntity<BaseResponse> handleTypeMismatch(TypeMismatchException ex) {
+        String message = "Invalid parameter type: " + ex.getPropertyName();
+        return ResponseEntity.badRequest().body(new BaseResponse(400, message, null));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<BaseResponse> handleMethodArgumentValidation(MethodArgumentNotValidException ex) {
+        String errors = ex.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        log.warn("Client error [400]: Validation failed - {}", errors);
+        return ResponseEntity.badRequest().body(new BaseResponse(400, errors, null));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<BaseResponse> handleMalformedJson(HttpMessageNotReadableException ex) {
+        log.warn("Client error [400]: Malformed request body");
+        return ResponseEntity.badRequest().body(new BaseResponse(400, "Malformed request body", null));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<BaseResponse> handleDataIntegrity(DataIntegrityViolationException ex) {
+        String detail = ex.getMostSpecificCause() == null ? "" : ex.getMostSpecificCause().getMessage();
+        String message = resolveDataIntegrityMessage(detail);
+        log.warn("Client error [409]: Data integrity violation - {}", detail);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new BaseResponse(409, message, null));
+    }
+
+    @ExceptionHandler(MailException.class)
+    public ResponseEntity<BaseResponse> handleMailError(MailException ex) {
+        log.error("Server error: Email service unavailable", ex);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new BaseResponse(503, "Email service unavailable", null));
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<BaseResponse> handleResourceNotFound(ResourceNotFoundException ex, WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(HttpStatus.NOT_FOUND.value())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, HttpStatus.NOT_FOUND);
+    }
+
+    @ExceptionHandler(CreatorIdentityException.class)
+    public ResponseEntity<BaseResponse> handleCreatorIdentityException(CreatorIdentityException ex,
+            WebRequest request) {
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(ex.getErrorCode().getCode())
+                .data(request.getDescription(false))
+                .build();
+
+        return new ResponseEntity<>(exceptionResponse, ex.getErrorCode().getHttpStatus());
+    }
+
+    // Re-throw Spring Security exceptions so ExceptionTranslationFilter handles
+    // them
+    // → AccessDeniedException (from @PreAuthorize) triggers
+    // JwtAuthenticationEntryPoint → 401
+    @ExceptionHandler(AccessDeniedException.class)
+    public void handleAccessDenied(AccessDeniedException ex) throws AccessDeniedException {
+        throw ex;
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public void handleAuthentication(AuthenticationException ex) throws AuthenticationException {
+        throw ex;
+    }
+
+    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
+    public ResponseEntity<BaseResponse> handleIllegalArgument(RuntimeException ex, WebRequest request) {
+        log.warn("Client error [400]: {}", ex.getMessage());
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message(ex.getMessage())
+                .code(HttpStatus.BAD_REQUEST.value())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<BaseResponse> handleGeneral(Exception ex, WebRequest request) {
+        log.error("Server error: {}", ex.getMessage(), ex);
+        BaseResponse exceptionResponse = BaseResponse.builder()
+                .message("Internal server error")
+                .code(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                .data(request.getDescription(false))
+                .build();
+        return new ResponseEntity<>(exceptionResponse, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    private String resolveDataIntegrityMessage(String detail) {
+        String normalized = detail == null ? "" : detail.toLowerCase(Locale.ROOT);
+
+        if (normalized.contains("media_status")
+                || (normalized.contains("media") && normalized.contains("status")
+                        && normalized.contains("check constraint"))) {
+            return "Media status is not allowed by the current database constraint. Update the media status constraint to include HLS_PROCESSING and HLS_READY.";
+        }
+
+        if (normalized.contains("duplicate key") || normalized.contains("unique constraint")) {
+            return "Data conflict - resource already exists";
+        }
+
+        if (normalized.contains("not-null constraint") || normalized.contains("null value in column")) {
+            return "Data conflict - required database field is missing";
+        }
+
+        if (normalized.contains("foreign key constraint")) {
+            return "Data conflict - referenced resource does not exist";
+        }
+
+        if (normalized.contains("check constraint")) {
+            return "Data conflict - value violates a database check constraint";
+        }
+
+        return "Data conflict - database constraint violation";
+    }
+}

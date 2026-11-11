@@ -1,0 +1,1031 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Home,
+  Menu,
+  Heart,
+  BookOpen,
+  AlignJustify,
+  Columns2,
+  X,
+  Loader2,
+  AlertTriangle,
+  List,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+} from "lucide-react";
+import {
+  getPublicEpisodeMedia,
+  getPublicEpisodes,
+  getPublicEpisodeDetail,
+  getPublicSeasons,
+  getPublicSeriesList,
+} from "@/features/series/api/series-api";
+import { ContentPaywallGate } from "@/features/checkout-content/components/content-paywall-gate";
+import { useAuthStore } from "@/features/auth/store/auth.store";
+import { cn } from "@/shared/utils/utils";
+import { LikeButton } from "@/features/series/components/like-button";
+import { EpisodeShareButton } from "@/features/series/components/episode-share-button";
+import { EpisodeBookmarkButton } from "@/features/series/components/episode-bookmark-button";
+import { useEpisodeLikes } from "@/features/series/hooks/use-episode-likes";
+import { FollowButton } from "@/features/series/components/follow-button";
+import { useCreatorFollow } from "@/features/series/hooks/use-creator-follow";
+import {
+  getCreatorDetail,
+  getFollowers,
+} from "@/features/series/api/creator-follows-api";
+import { useComicHeartbeat } from "@/features/playback/hooks/useComicHeartbeat";
+import { getEpisodeWatchPosition } from "@/features/playback/api/watch-sessions-api";
+import { AdSlot } from "@/shared/ui/ad-slot";
+import { EpisodeCommentsSection } from "@/features/comments";
+import { WatermarkedImage } from "./watermarked-image";
+
+interface ComicReaderProps {
+  episodeId: string;
+}
+
+type ReadingMode = "vertical" | "horizontal";
+
+export function ComicReader({ episodeId }: ComicReaderProps) {
+  const router = useRouter();
+  const [readingMode, setReadingMode] = useState<ReadingMode>("vertical");
+  const [currentPage, setCurrentPage] = useState(0);
+  const [showControls, setShowControls] = useState(true);
+  const [showChapterMenu, setShowChapterMenu] = useState(false);
+  const [readingProgress, setReadingProgress] = useState(0);
+  const [zoom, setZoom] = useState(100);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollYRef = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Falls back to the logged-in viewer's own accountId so the BE entitlement
+  // check (purchase/subscription/ownership) has someone to check against —
+  // without this every viewer looks anonymous and paid content 403s for everyone.
+  const authUser = useAuthStore((state) => state.user);
+  const viewerId = authUser?.accountId;
+
+  // Fetch thông tin chi tiết tập truyện
+  const { data: episodeDetail, refetch: refetchEpisodeDetail } = useQuery({
+    queryKey: ["publicEpisodeDetail", episodeId],
+    queryFn: () => getPublicEpisodeDetail(episodeId),
+    enabled: !!episodeId,
+  });
+
+  const { data: chapterEpisodes = [] } = useQuery({
+    queryKey: ["publicSeasonEpisodes", episodeDetail?.seasonId],
+    queryFn: () => getPublicEpisodes(episodeDetail!.seasonId),
+    enabled: !!episodeDetail?.seasonId,
+  });
+
+  const sortedChapterEpisodes = useMemo(
+    () =>
+      [...chapterEpisodes].sort((a, b) => a.episodeNumber - b.episodeNumber),
+    [chapterEpisodes],
+  );
+
+  const currentChapterIndex = sortedChapterEpisodes.findIndex(
+    (episode) => episode.episodeId === episodeId,
+  );
+  const previousChapter =
+    currentChapterIndex > 0
+      ? sortedChapterEpisodes[currentChapterIndex - 1]
+      : null;
+  const nextChapter =
+    currentChapterIndex >= 0 &&
+    currentChapterIndex < sortedChapterEpisodes.length - 1
+      ? sortedChapterEpisodes[currentChapterIndex + 1]
+      : null;
+
+  // Tải trạng thái và lượt thích tập truyện
+  const { totalLikes, isLiked, toggleLike, isMutating } =
+    useEpisodeLikes(episodeId);
+
+  // Truy vấn thông tin creator
+  const { data: creatorDetail } = useQuery({
+    queryKey: ["creatorDetailPublic", episodeDetail?.creatorId],
+    queryFn: () => getCreatorDetail(episodeDetail!.creatorId),
+    enabled: !!episodeDetail?.creatorId,
+  });
+
+  // Fetch danh sách truyện public để ghép đúng series detail của chapter hiện tại.
+  const { data: publicSeriesData } = useQuery({
+    queryKey: ["publicComicSeriesListAll"],
+    queryFn: () => getPublicSeriesList(1, 100, "COMIC"),
+    staleTime: 30 * 1000,
+  });
+
+  const episodeSeriesId = useMemo(() => {
+    if (!episodeDetail) return null;
+    return "seriesId" in episodeDetail &&
+      typeof episodeDetail.seriesId === "string"
+      ? episodeDetail.seriesId
+      : null;
+  }, [episodeDetail]);
+
+  const comicSeriesCandidates = useMemo(
+    () =>
+      (publicSeriesData?.content ?? []).filter(
+        (series) => String(series.contentType).toUpperCase() === "COMIC",
+      ),
+    [publicSeriesData?.content],
+  );
+
+  const comicSeasonQueries = useQueries({
+    queries: comicSeriesCandidates.map((series) => ({
+      queryKey: ["publicComicSeriesSeasonsForReader", series.seriesId],
+      queryFn: () => getPublicSeasons(series.seriesId),
+      enabled: Boolean(episodeDetail?.seasonId && !episodeSeriesId),
+      staleTime: 60 * 1000,
+    })),
+  });
+
+  const matchedSeries = useMemo(() => {
+    if (!episodeDetail) return null;
+
+    if (episodeSeriesId) {
+      const exactSeries = comicSeriesCandidates.find(
+        (series) => series.seriesId === episodeSeriesId,
+      );
+
+      if (exactSeries) {
+        return exactSeries;
+      }
+    }
+
+    const seriesIndexBySeason = comicSeasonQueries.findIndex((query) =>
+      query.data?.some((season) => season.seasonId === episodeDetail.seasonId),
+    );
+
+    return seriesIndexBySeason >= 0
+      ? comicSeriesCandidates[seriesIndexBySeason]
+      : null;
+  }, [
+    comicSeasonQueries,
+    comicSeriesCandidates,
+    episodeDetail,
+    episodeSeriesId,
+  ]);
+
+  const creatorAccountId =
+    creatorDetail?.accountId ||
+    matchedSeries?.accountId ||
+    (creatorDetail?.creatorId === episodeDetail?.creatorId
+      ? undefined
+      : creatorDetail?.creatorId);
+  const creatorName =
+    creatorDetail?.displayName ||
+    creatorDetail?.username ||
+    matchedSeries?.creatorName ||
+    episodeDetail?.createdBy ||
+    "Nhà sáng tạo";
+  const creatorAvatar =
+    creatorDetail?.avatarUrl || matchedSeries?.creatorAvatar;
+
+  const {
+    isFollowing,
+    toggleFollow,
+    isMutating: isFollowMutating,
+  } = useCreatorFollow(creatorAccountId);
+
+  const isOwner = Boolean(
+    authUser?.accountId &&
+    creatorAccountId &&
+    authUser.accountId === creatorAccountId,
+  );
+
+  const { data: ownFollowersData } = useQuery({
+    queryKey: ["ownCreatorFollowers", creatorAccountId],
+    queryFn: () => getFollowers(0, 100),
+    enabled: !!authUser && isOwner,
+  });
+
+  const ownFollowerCount =
+    ownFollowersData?.numberOfElements ??
+    ownFollowersData?.content?.length ??
+    0;
+
+  const rawFollowerCount = Math.max(
+    creatorDetail?.followerCount ?? 0,
+    creatorDetail?.totalCreatorFollowers ?? 0,
+    creatorDetail?.followersCount ?? 0,
+    matchedSeries?.totalCreatorFollowers ?? 0,
+    isOwner ? ownFollowerCount : 0,
+  );
+
+  const displayFollowersCount = rawFollowerCount;
+
+  // Fetch danh sách trang truyện (media pages) từ API
+  const {
+    data: mediaPages,
+    isLoading: isPagesLoading,
+    isError: isPagesError,
+    refetch: refetchMediaPages,
+  } = useQuery({
+    queryKey: ["publicEpisodeMedia", episodeId, viewerId ?? "anonymous"],
+    queryFn: () => getPublicEpisodeMedia(episodeId, viewerId),
+    // Entitlement can change externally (just purchased) — never serve a stale 403 from cache.
+    staleTime: 0,
+    refetchOnMount: "always",
+    retry: false,
+  });
+
+  // Sắp xếp các trang theo displayOrder
+  const sortedPages = [...(mediaPages ?? [])].sort(
+    (a, b) => a.displayOrder - b.displayOrder,
+  );
+
+  const totalPages = sortedPages.length;
+
+  // Tự động khôi phục trang/vị trí đã đọc gần nhất từ API watch-session
+  useEffect(() => {
+    if (!episodeId || totalPages === 0) return;
+
+    let isMounted = true;
+    console.log("[ComicReader] Fetching watch position for episodeId:", episodeId, "totalPages:", totalPages);
+    void getEpisodeWatchPosition(episodeId).then((position) => {
+      console.log("[ComicReader] API Watch Position result:", position);
+      if (!isMounted || position == null || position <= 0) return;
+
+      const pageIndex = Math.min(totalPages - 1, Math.max(0, Math.round(position) - 1));
+      console.log("[ComicReader] Target pageIndex:", pageIndex);
+
+      setCurrentPage(pageIndex);
+
+      // Đợi DOM render ảnh xong rồi tiến hành cuộn màn hình
+      const timerId = setTimeout(() => {
+        if (!isMounted) return;
+        if (readingMode === "vertical" && pageIndex > 0) {
+          const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+          console.log("[ComicReader] Executing vertical scroll to pageIndex:", pageIndex, "scrollHeight:", scrollHeight);
+          if (scrollHeight > 0) {
+            const targetScrollY = (pageIndex / (totalPages - 1)) * scrollHeight;
+            window.scrollTo({ top: targetScrollY, behavior: "smooth" });
+          }
+        }
+      }, 500);
+
+      return () => clearTimeout(timerId);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [episodeId, totalPages, readingMode]);
+
+  // Track reading views and progress updates for comic chapters
+  useComicHeartbeat(
+    episodeId,
+    currentPage,
+    totalPages,
+    readingMode,
+    Boolean(authUser),
+  );
+
+  // Auto-hide controls sau 3 giây
+  const resetHideTimer = useCallback(() => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    setShowControls(true);
+    hideTimerRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(resetHideTimer, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, [resetHideTimer]);
+
+  useEffect(() => {
+    let frameId = 0;
+    lastScrollYRef.current = window.scrollY;
+
+    const syncScrollState = () => {
+      const currentScrollY = window.scrollY;
+      const maxScrollY = Math.max(
+        document.documentElement.scrollHeight - window.innerHeight,
+        1,
+      );
+
+      setReadingProgress(
+        Math.min(100, Math.max(0, (currentScrollY / maxScrollY) * 100)),
+      );
+
+      if (readingMode === "vertical") {
+        if (
+          currentScrollY < lastScrollYRef.current - 8 ||
+          currentScrollY < 80
+        ) {
+          setShowControls(true);
+        } else if (currentScrollY > lastScrollYRef.current + 16) {
+          setShowControls(false);
+        }
+      }
+
+      lastScrollYRef.current = currentScrollY;
+      frameId = 0;
+    };
+
+    const handleScroll = () => {
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(syncScrollState);
+    };
+
+    const initialFrameId = window.requestAnimationFrame(syncScrollState);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.cancelAnimationFrame(initialFrameId);
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [readingMode]);
+
+  // Chuyển trang ngang
+  const goToPage = useCallback(
+    (index: number) => {
+      const clamped = Math.max(0, Math.min(index, totalPages - 1));
+      setCurrentPage(clamped);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    [totalPages],
+  );
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        goToPage(currentPage + 1);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        goToPage(currentPage - 1);
+      } else if (e.key === "Escape") {
+        setShowChapterMenu(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [currentPage, goToPage]);
+
+  // Zoom controls
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 20, 200));
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 20, 60));
+  const handleZoomReset = () => setZoom(100);
+  const handleReloadChapter = () => {
+    setCurrentPage(0);
+    setReadingProgress(0);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    void refetchEpisodeDetail();
+    void refetchMediaPages();
+  };
+
+  const seriesDetailHref = matchedSeries?.seriesId
+    ? `/series/${matchedSeries.seriesId}#episodes`
+    : "/comics";
+  const navigationProgress =
+    readingMode === "horizontal" && totalPages > 0
+      ? ((currentPage + 1) / totalPages) * 100
+      : readingProgress;
+
+  const chapterNavigation = (
+    <div className="relative mx-auto flex w-full max-w-6xl items-center justify-between gap-2 overflow-hidden rounded-2xl border border-white/10 bg-[#101014]/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+      <div
+        className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-[#D4AF37] via-[#F56565] to-[#D4AF37] transition-[width] duration-150"
+        style={{ width: `${navigationProgress}%` }}
+      />
+
+      <div className="flex shrink-0 items-center gap-1">
+        <Link
+          href="/"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[#D4AF37] transition hover:bg-white/10 hover:text-[#E5C158]"
+          title="Trang chủ"
+        >
+          <Home className="h-5 w-5" />
+        </Link>
+        <Link
+          href={seriesDetailHref}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[#D4AF37] transition hover:bg-white/10 hover:text-[#E5C158]"
+          title="Danh sách chương"
+        >
+          <Menu className="h-5 w-5" />
+        </Link>
+        <button
+          type="button"
+          onClick={handleReloadChapter}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[#D4AF37] transition hover:bg-white/10 hover:text-[#E5C158]"
+          title="Tải lại truyện"
+        >
+          <RotateCcw className="h-4 w-4" />
+        </button>
+      </div>
+
+      <button
+        type="button"
+        onClick={() =>
+          previousChapter && router.push(`/read/${previousChapter.episodeId}`)
+        }
+        disabled={!previousChapter}
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-200 transition hover:border-[#D4AF37]/40 hover:bg-[#D4AF37]/15 disabled:cursor-not-allowed disabled:opacity-35"
+        title="Tập trước"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+
+      <select
+        value={episodeId}
+        onChange={(event) => router.push(`/read/${event.target.value}`)}
+        disabled={sortedChapterEpisodes.length === 0}
+        className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm font-bold text-white outline-none transition focus:border-[#D4AF37]/60"
+        aria-label="Chọn tập truyện"
+      >
+        {sortedChapterEpisodes.length > 0 ? (
+          sortedChapterEpisodes.map((episode) => (
+            <option
+              key={episode.episodeId}
+              value={episode.episodeId}
+              className="bg-[#121214] text-white"
+            >
+              Tập {episode.episodeNumber}: {episode.title}
+            </option>
+          ))
+        ) : (
+          <option value={episodeId}>Tập hiện tại</option>
+        )}
+      </select>
+
+      <button
+        type="button"
+        onClick={() =>
+          nextChapter && router.push(`/read/${nextChapter.episodeId}`)
+        }
+        disabled={!nextChapter}
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-200 transition hover:border-[#D4AF37]/40 hover:bg-[#D4AF37]/15 disabled:cursor-not-allowed disabled:opacity-35"
+        title="Tập tiếp theo"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+
+      {!isOwner && creatorAccountId && (
+        <button
+          type="button"
+          onClick={toggleFollow}
+          disabled={isFollowMutating}
+          className="hidden h-9 shrink-0 items-center gap-1.5 rounded-xl bg-[#D35B51] px-3 text-xs font-black text-white shadow-[0_8px_24px_rgba(211,91,81,0.25)] transition hover:bg-[#E4665B] disabled:cursor-not-allowed disabled:opacity-60 sm:inline-flex"
+        >
+          <Heart className={cn("h-4 w-4", isFollowing && "fill-current")} />
+          {isFollowing ? "Đang theo dõi" : "Theo dõi"}
+        </button>
+      )}
+    </div>
+  );
+
+  const bottomChapterNavigation = (
+    <div className="mx-auto flex w-full max-w-4xl items-center justify-center gap-3">
+      <button
+        type="button"
+        onClick={() =>
+          previousChapter && router.push(`/read/${previousChapter.episodeId}`)
+        }
+        disabled={!previousChapter}
+        className="inline-flex items-center gap-2 rounded-xl border border-[#F3A7A0]/40 bg-[#D35B51]/70 px-5 py-3 text-sm font-black text-white transition hover:bg-[#D35B51] disabled:cursor-not-allowed disabled:opacity-40 sm:text-base"
+      >
+        <ChevronLeft className="h-5 w-5" />
+        Chap trước
+      </button>
+
+      <EpisodeBookmarkButton
+        episodeId={episodeId}
+        contentType="COMIC"
+        className="h-12 w-12 rounded-xl bg-[#1e1e24] hover:bg-[#D4AF37]/20 border border-white/10"
+      />
+
+      <button
+        type="button"
+        onClick={() =>
+          nextChapter && router.push(`/read/${nextChapter.episodeId}`)
+        }
+        disabled={!nextChapter}
+        className="inline-flex items-center gap-2 rounded-xl border border-[#D35B51]/50 bg-[#C55349] px-5 py-3 text-sm font-black text-white transition hover:bg-[#D35B51] disabled:cursor-not-allowed disabled:opacity-40 sm:text-base"
+      >
+        Chap sau
+        <ChevronRight className="h-5 w-5" />
+      </button>
+    </div>
+  );
+
+  // ─── Loading State ───
+  if (isPagesLoading) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#0B0B0C] text-white">
+        <Loader2 className="h-10 w-10 animate-spin text-[#D4AF37] mb-4" />
+        <p className="text-sm text-gray-400 animate-pulse">
+          Đang tải các trang truyện...
+        </p>
+      </div>
+    );
+  }
+
+  // ─── Not Entitled (Paywall) State ───
+  // We no longer block the entire page on "PLAYBACK_NOT_ENTITLED" because the backend will return partial pages.
+  // We will handle paywall inline where isLocked is true.
+
+  // ─── Error State ───
+  if (isPagesError || !mediaPages) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#0B0B0C] text-white px-6 text-center">
+        <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-6">
+          <AlertTriangle className="w-8 h-8 text-red-400" />
+        </div>
+        <h3 className="text-xl font-bold mb-2">Không thể tải trang truyện</h3>
+        <p className="text-gray-400 text-sm mb-6">
+          Tập truyện này chưa có nội dung hoặc đã gặp lỗi khi tải.
+        </p>
+        <button
+          onClick={() => router.back()}
+          className="px-6 py-2.5 bg-white text-black font-semibold rounded-xl hover:bg-gray-200 transition-colors"
+        >
+          Quay lại
+        </button>
+      </div>
+    );
+  }
+
+  // ─── Empty Pages State ───
+  if (sortedPages.length === 0) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#0B0B0C] text-white px-6 text-center">
+        <div className="w-16 h-16 rounded-full bg-[#D4AF37]/10 flex items-center justify-center mb-6">
+          <BookOpen className="w-8 h-8 text-[#D4AF37]" />
+        </div>
+        <h3 className="text-xl font-bold mb-2">Chưa có trang truyện</h3>
+        <p className="text-gray-400 text-sm mb-6">
+          Tập truyện này chưa có trang nào được tải lên.
+        </p>
+        <button
+          onClick={() => router.back()}
+          className="px-6 py-2.5 bg-[#D4AF37] text-black font-bold rounded-xl hover:bg-[#E5C158] transition-colors"
+        >
+          Quay lại
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="relative min-h-screen bg-[#0B0B0C] select-none"
+      ref={containerRef}
+    >
+      {/* ─── TOP BAR ─── */}
+      <div
+        className={cn(
+          "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
+          showControls
+            ? "opacity-100 translate-y-0"
+            : "opacity-0 -translate-y-full pointer-events-none",
+        )}
+      >
+        <div className="border-b border-white/5 bg-black/70 px-3 py-2 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-6xl items-center gap-2">
+            <div className="min-w-0 flex-1">{chapterNavigation}</div>
+
+            {/* Zoom controls (chỉ hiển thị ở vertical mode) */}
+            {readingMode === "vertical" && (
+              <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-2 backdrop-blur-md lg:flex">
+                <button
+                  onClick={handleZoomOut}
+                  className="rounded-full p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+                  title="Thu nhỏ"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <span className="w-9 text-center text-xs font-bold text-gray-300">
+                  {zoom}%
+                </span>
+                <button
+                  onClick={handleZoomIn}
+                  className="rounded-full p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+                  title="Phóng to"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={handleZoomReset}
+                  className="rounded-full p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+                  title="Đặt lại"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            {/* Chế độ đọc toggle */}
+            <button
+              onClick={() => {
+                setReadingMode((m) =>
+                  m === "vertical" ? "horizontal" : "vertical",
+                );
+                setCurrentPage(0);
+              }}
+              className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-1.5 text-xs font-bold text-gray-300 hover:text-white transition-all"
+              title="Chuyển chế độ đọc"
+            >
+              {readingMode === "vertical" ? (
+                <>
+                  <Columns2 className="w-3.5 h-3.5" />{" "}
+                  <span className="hidden sm:inline">Từng trang</span>
+                </>
+              ) : (
+                <>
+                  <AlignJustify className="w-3.5 h-3.5" />{" "}
+                  <span className="hidden sm:inline">Cuộn dọc</span>
+                </>
+              )}
+            </button>
+
+            {/* Menu chapter */}
+            <button
+              onClick={() => setShowChapterMenu((v) => !v)}
+              className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-gray-300 hover:text-white transition-all"
+              title="Danh sách trang"
+            >
+              <List className="w-4 h-4" />
+            </button>
+
+            {/* Nút Bookmark tập truyện trên top bar */}
+            <EpisodeBookmarkButton
+              episodeId={episodeId}
+              contentType="COMIC"
+              className="h-8 w-8 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ─── CHAPTER MENU PANEL ─── */}
+      {showChapterMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowChapterMenu(false)}
+          />
+          <div className="fixed right-0 top-0 bottom-0 z-50 w-72 bg-[#141416] border-l border-white/5 flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+              <h3 className="text-white font-bold text-sm">Danh Sách Trang</h3>
+              <button
+                onClick={() => setShowChapterMenu(false)}
+                className="text-gray-500 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-3 space-y-1 px-3">
+              {sortedPages.map((page, idx) => (
+                <button
+                  key={page.mediaId}
+                  onClick={() => {
+                    if (readingMode === "horizontal") {
+                      goToPage(idx);
+                    } else {
+                      // Cuộn dọc: scroll đến phần tử tương ứng
+                      const el = document.getElementById(`page-${idx}`);
+                      el?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }
+                    setShowChapterMenu(false);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all text-sm",
+                    idx === currentPage && readingMode === "horizontal"
+                      ? "bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37]"
+                      : "text-gray-400 hover:bg-white/5 hover:text-white",
+                  )}
+                >
+                  <span className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold shrink-0">
+                    {idx + 1}
+                  </span>
+                  <span className="font-medium">Trang {idx + 1}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ─── READING AREA ─── */}
+      <div className="pt-[70px]">
+        {readingMode === "vertical" ? (
+          /* ═══ VERTICAL / WEBTOON MODE ═══ */
+          <div className="flex flex-col items-center overflow-x-auto pb-24 gap-0">
+            {sortedPages.map((page, idx) => (
+              <div
+                key={page.mediaId}
+                id={`page-${idx}`}
+                className="w-full flex justify-center bg-[#0B0B0C]"
+              >
+                {page.isLocked ? (
+                  <div
+                    className="relative mx-auto flex aspect-[2/3] w-full flex-col items-center justify-center overflow-hidden bg-[#0B0B0C]"
+                    style={{
+                      maxWidth: `${(zoom / 100) * 512}px`,
+                      width: `${zoom}%`,
+                    }}
+                  >
+                    {page.fileUrl && (
+                      <WatermarkedImage
+                        mediaId={page.mediaId}
+                        fallbackUrl={page.fileUrl}
+                        alt="Locked content"
+                        className="h-full w-full object-cover select-none"
+                      />
+                    )}
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 px-6">
+                      {idx === 5 && (
+                        <ContentPaywallGate
+                          episodeId={episodeId}
+                          contentKind="COMIC"
+                        />
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <WatermarkedImage
+                    mediaId={page.mediaId}
+                    fallbackUrl={page.fileUrl}
+                    alt={`Trang ${idx + 1}`}
+                    className="mx-auto block h-auto object-contain transition-[width,max-width] duration-200"
+                    style={{
+                      maxWidth: `${(zoom / 100) * 896}px`,
+                      width: `${zoom}%`,
+                    }}
+                    loading={idx < 3 ? "eager" : "lazy"}
+                    onLoad={() => {
+                      if (idx === 0) setCurrentPage(0);
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+
+            {/* End of chapter message */}
+            <div className="w-full max-w-lg mx-auto px-6 py-12 text-center bg-[#121214]/60 border border-white/5 rounded-3xl p-8 backdrop-blur-md shadow-2xl relative mt-10">
+              <div className="w-12 h-12 rounded-full bg-[#D4AF37]/10 flex items-center justify-center mx-auto mb-4">
+                <BookOpen className="w-6 h-6 text-[#D4AF37]" />
+              </div>
+              <p className="text-gray-300 text-sm font-bold mb-6">
+                Bạn đã đọc xong tập này!
+              </p>
+
+              {/* Nút Thích & Chia sẻ & Thống kê */}
+              <div className="flex flex-col items-center gap-3 w-full mb-8 pb-6 border-b border-white/5">
+                <div className="flex items-center gap-3 flex-wrap justify-center">
+                  <LikeButton
+                    isLiked={isLiked}
+                    likeCount={totalLikes}
+                    onLikeToggle={toggleLike}
+                    isLoading={isMutating}
+                  />
+
+                  <EpisodeShareButton
+                    episodeId={episodeId}
+                    contentType="COMIC"
+                    variant="pill"
+                  />
+                </div>
+              </div>
+
+              {/* Creator info & Follow action */}
+              <div className="flex items-center justify-between w-full bg-white/[0.02] border border-white/5 rounded-2xl p-4 mb-6">
+                <Link
+                  href={
+                    authUser?.accountId &&
+                    (creatorAccountId === authUser.accountId ||
+                      episodeDetail?.creatorId === authUser.accountId)
+                      ? "/creator-channel"
+                      : `/public-channel?creatorId=${creatorAccountId || episodeDetail?.creatorId}`
+                  }
+                  className="flex items-center gap-3 min-w-0 group cursor-pointer hover:opacity-90 transition-opacity"
+                >
+                  <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 overflow-hidden relative flex-none group-hover:border-yellow-500/50 transition-colors">
+                    <img
+                      src={
+                        creatorAvatar ||
+                        "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=80&auto=format&fit=crop"
+                      }
+                      alt={creatorName}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="text-left min-w-0">
+                    <h4 className="text-sm font-bold text-gray-200 group-hover:text-yellow-400 truncate leading-snug transition-colors">
+                      {creatorName}
+                    </h4>
+                    <p className="text-[10px] text-gray-500 font-semibold mt-0.5">
+                      {displayFollowersCount != null
+                        ? `${displayFollowersCount.toLocaleString("vi-VN")} người theo dõi`
+                        : "Nhà sáng tạo TaleX"}
+                    </p>
+                  </div>
+                </Link>
+
+                {!isOwner && (
+                  <FollowButton
+                    isFollowing={isFollowing}
+                    onFollowToggle={toggleFollow}
+                    isMutating={isFollowMutating}
+                  />
+                )}
+              </div>
+
+              <button
+                onClick={() => router.back()}
+                className="w-full max-w-xs py-3 bg-[#D4AF37] hover:bg-[#E5C158] text-black font-extrabold rounded-xl transition-all active:scale-[0.98] text-sm"
+              >
+                Quay lại trang Series
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ═══ HORIZONTAL / MANGA MODE ═══ */
+          <div className="relative min-h-screen flex items-center justify-center bg-black">
+            {/* Page Image */}
+            <div
+              className="relative w-full h-screen flex items-center justify-center overflow-hidden cursor-pointer"
+              onClick={() => {
+                setShowControls((current) => !current);
+              }}
+            >
+              {sortedPages[currentPage] &&
+                (sortedPages[currentPage].isLocked ? (
+                  <>
+                    {sortedPages[currentPage].fileUrl && (
+                      <WatermarkedImage
+                        key={`locked-${sortedPages[currentPage].mediaId}`}
+                        mediaId={sortedPages[currentPage].mediaId}
+                        fallbackUrl={sortedPages[currentPage].fileUrl}
+                        alt="Locked content"
+                        className="container absolute inset-0 mx-auto h-full w-full max-w-4xl object-contain select-none"
+                      />
+                    )}
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 px-6">
+                      <ContentPaywallGate
+                        episodeId={episodeId}
+                        contentKind="COMIC"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <WatermarkedImage
+                    key={sortedPages[currentPage].mediaId}
+                    mediaId={sortedPages[currentPage].mediaId}
+                    fallbackUrl={sortedPages[currentPage].fileUrl}
+                    alt={`Trang ${currentPage + 1}`}
+                    className="container mx-auto max-h-screen w-full max-w-4xl object-contain"
+                    style={{ userSelect: "none" }}
+                  />
+                ))}
+            </div>
+
+            {/* Left/Right Click Areas */}
+            <button
+              className="absolute left-0 top-0 bottom-0 w-1/3 opacity-0 z-10"
+              onClick={() => goToPage(currentPage - 1)}
+              aria-label="Trang trước"
+            />
+            <button
+              className="absolute right-0 top-0 bottom-0 w-1/3 opacity-0 z-10"
+              onClick={() => goToPage(currentPage + 1)}
+              aria-label="Trang kế tiếp"
+            />
+
+            {/* Left Arrow */}
+            <button
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage === 0}
+              className={cn(
+                "absolute left-4 top-1/2 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-black/60 border border-white/10 flex items-center justify-center text-white transition-all hover:bg-[#D4AF37]/20 hover:border-[#D4AF37]/40",
+                currentPage === 0 && "opacity-30 cursor-not-allowed",
+                showControls ? "opacity-100" : "opacity-0 pointer-events-none",
+              )}
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            {/* Right Arrow */}
+            <button
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage === totalPages - 1}
+              className={cn(
+                "absolute right-4 top-1/2 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-black/60 border border-white/10 flex items-center justify-center text-white transition-all hover:bg-[#D4AF37]/20 hover:border-[#D4AF37]/40",
+                currentPage === totalPages - 1 &&
+                  "opacity-30 cursor-not-allowed",
+                showControls ? "opacity-100" : "opacity-0 pointer-events-none",
+              )}
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+
+        {/* Phần Bình luận tập truyện */}
+        <div className="px-4 py-6">{bottomChapterNavigation}</div>
+
+        <AdSlot
+          slotId="mock-read-bottom"
+          format="horizontal"
+          className="my-8"
+        />
+
+        <div className="mx-auto w-full max-w-5xl px-4 pb-12">
+          <EpisodeCommentsSection episodeId={episodeId} />
+        </div>
+      </div>
+
+      {/* ─── BOTTOM BAR (chỉ hiển thị ở horizontal mode) ─── */}
+      {readingMode === "horizontal" && (
+        <div
+          className={cn(
+            "fixed bottom-0 left-0 right-0 z-50 transition-all duration-300",
+            showControls
+              ? "opacity-100 translate-y-0"
+              : "opacity-0 translate-y-full pointer-events-none",
+          )}
+        >
+          <div className="bg-gradient-to-t from-black/95 to-transparent backdrop-blur-sm border-t border-white/5 px-6 py-5">
+            {/* Progress bar */}
+            <div className="flex items-center gap-4 mb-4">
+              <span className="text-xs font-bold text-gray-500 w-8 text-right">
+                1
+              </span>
+              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-[#D4AF37] to-[#E5C158] rounded-full transition-all duration-300"
+                  style={{
+                    width: `${((currentPage + 1) / totalPages) * 100}%`,
+                  }}
+                />
+              </div>
+              <span className="text-xs font-bold text-gray-500 w-8">
+                {totalPages}
+              </span>
+            </div>
+
+            {/* Page dots (hiển thị tối đa 15 trang) */}
+            {totalPages <= 15 && (
+              <div className="flex items-center justify-center gap-1.5 mb-4">
+                {sortedPages.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => goToPage(idx)}
+                    className={cn(
+                      "rounded-full transition-all duration-200",
+                      idx === currentPage
+                        ? "w-4 h-2 bg-[#D4AF37]"
+                        : "w-1.5 h-1.5 bg-white/25 hover:bg-white/50",
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Navigation buttons */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Trang trước
+              </button>
+
+              <span className="text-[#D4AF37] font-extrabold text-sm">
+                {currentPage + 1} / {totalPages}
+              </span>
+
+              <button
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages - 1}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Trang sau
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

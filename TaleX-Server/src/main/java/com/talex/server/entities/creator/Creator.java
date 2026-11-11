@@ -1,0 +1,86 @@
+package com.talex.server.entities.creator;
+
+import com.talex.server.entities.auth.Account;
+import com.talex.server.entities.analytic.AnalyticData;
+import com.talex.server.entities.campaign.CampaignWallet;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+@Entity
+@Table(name = "creator")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class Creator {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "creator_id")
+    private String creatorId;
+
+    // Đã đồng ý điều khoản xác thức (Bước đệm để bật kiếm tiền)
+    @Column(name = "is_verified")
+    @Builder.Default
+    private Boolean isVerified = false;
+
+    @Column(name = "is_banned")
+    @Builder.Default
+    private Boolean isBanned = false;
+
+    @Embedded
+    @Builder.Default
+    private AnalyticData analyticData = new AnalyticData();
+
+    // Tổng quan doanh thu
+    @Column(name = "current_balance", nullable = false)
+    @Builder.Default
+    private BigDecimal currentBalance = BigDecimal.ZERO;
+
+    @Column(name = "total_balance", nullable = false)
+    @Builder.Default
+    private BigDecimal totalBalance = BigDecimal.ZERO;
+
+    @Column(name = "estimated_net_balance", nullable = false)
+    @Builder.Default
+    private BigDecimal estimatedNetBalance = BigDecimal.ZERO;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "account_id", nullable = false, unique = true)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private Account account;
+
+    @OneToOne(mappedBy = "creator")
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private CreatorIdentity creatorIdentity;
+
+    @OneToMany(mappedBy = "creator", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<PaymentProfile> paymentProfiles = new ArrayList<>();
+
+    @OneToMany(mappedBy = "creator", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private List<RevenueTransaction> revenueTransactions = new ArrayList<>();
+
+    @OneToOne(mappedBy = "creator", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private CampaignWallet campaignWallet;
+}

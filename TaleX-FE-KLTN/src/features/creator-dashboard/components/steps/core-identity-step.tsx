@@ -1,0 +1,431 @@
+import React, { useState, useRef } from "react";
+import { Upload, X, ChevronDown, Check, ImageIcon } from "lucide-react";
+import { useGetActiveContentWarningCategories } from "@/features/admin/hooks/use-content-warning-category";
+import { ImageCropModal } from "@/features/creator-dashboard/components/image-crop-modal";
+
+export interface CoreIdentityData {
+  title: string;
+  description: string;
+  contentType: "COMIC" | "VIDEO";
+  visibility: "PUBLIC" | "PRIVATE";
+  ageRating: string;
+  language: string;
+  categoryIds: string[];
+  tagIds: string[];
+  contentWarnings: string[];
+  coverFile?: File;
+  bannerFile?: File;
+  coverUrl?: string; // for edit mode
+  bannerUrl?: string; // for edit mode
+}
+
+interface CoreIdentityStepProps {
+  isUpdate?: boolean;
+  initialData?: Partial<CoreIdentityData>;
+  onSave: (data: CoreIdentityData) => void;
+  onCancel?: () => void;
+  categories: { id: string; name: string }[];
+  tags: { id: string; name: string }[];
+}
+
+export function CoreIdentityStep({ initialData, onSave, onCancel, categories, tags, isUpdate }: CoreIdentityStepProps) {
+  // Danh sách nhóm cảnh báo nội dung — CRUD được ở Admin (trước đây hardcode, xem
+  // ContentWarningCategoryManagement), chỉ trả nhóm đang active.
+  const contentWarningOptionsQuery = useGetActiveContentWarningCategories();
+  const contentWarningOptions = contentWarningOptionsQuery.data ?? [];
+
+  const [formData, setFormData] = useState<CoreIdentityData>({
+    title: initialData?.title || "",
+    description: initialData?.description || "",
+    contentType: initialData?.contentType || "COMIC",
+    visibility: initialData?.visibility || "PUBLIC",
+    ageRating: initialData?.ageRating || "EVERYONE",
+    language: initialData?.language || "vi",
+    categoryIds: initialData?.categoryIds || [],
+    tagIds: initialData?.tagIds || [],
+    contentWarnings: initialData?.contentWarnings || [],
+    coverFile: initialData?.coverFile,
+    bannerFile: initialData?.bannerFile,
+    coverUrl: initialData?.coverUrl,
+    bannerUrl: initialData?.bannerUrl,
+  });
+
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+  const posterInputRef = useRef<HTMLInputElement>(null);
+
+  const [bannerPreview, setBannerPreview] = useState<string | null>(initialData?.bannerUrl || null);
+  const [posterPreview, setPosterPreview] = useState<string | null>(initialData?.coverUrl || null);
+
+  // State quản lý Modal Crop Ảnh
+  const [cropModalState, setCropModalState] = useState<{
+    isOpen: boolean;
+    imageSrc: string | null;
+    aspectRatio: number;
+    aspectRatioLabel: string;
+    title: string;
+    originalFileName: string;
+    targetField: "cover" | "banner";
+  }>({
+    isOpen: false,
+    imageSrc: null,
+    aspectRatio: 2 / 3,
+    aspectRatioLabel: "2:3 (Dọc)",
+    title: "Cắt ảnh Poster",
+    originalFileName: "",
+    targetField: "cover",
+  });
+
+  const handleBannerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setCropModalState({
+          isOpen: true,
+          imageSrc: event.target?.result as string,
+          aspectRatio: 16 / 9,
+          aspectRatioLabel: "16:9 (Ngang)",
+          title: "Cắt ảnh Banner ngang",
+          originalFileName: file.name,
+          targetField: "banner",
+        });
+      };
+      reader.readAsDataURL(file);
+      e.target.value = "";
+    }
+  };
+
+  const handlePosterUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setCropModalState({
+          isOpen: true,
+          imageSrc: event.target?.result as string,
+          aspectRatio: 2 / 3,
+          aspectRatioLabel: "2:3 (Dọc)",
+          title: "Cắt ảnh Poster dọc",
+          originalFileName: file.name,
+          targetField: "cover",
+        });
+      };
+      reader.readAsDataURL(file);
+      e.target.value = "";
+    }
+  };
+
+  const handleCropComplete = (croppedFile: File, previewUrl: string) => {
+    if (cropModalState.targetField === "cover") {
+      setFormData((prev) => ({ ...prev, coverFile: croppedFile }));
+      setPosterPreview(previewUrl);
+    } else {
+      setFormData((prev) => ({ ...prev, bannerFile: croppedFile }));
+      setBannerPreview(previewUrl);
+    }
+  };
+
+  const toggleCategory = (id: string) => {
+    const updated = formData.categoryIds.includes(id)
+      ? formData.categoryIds.filter(c => c !== id)
+      : [...formData.categoryIds, id];
+    setFormData({ ...formData, categoryIds: updated });
+  };
+
+  const toggleTag = (id: string) => {
+    const updated = formData.tagIds.includes(id)
+      ? formData.tagIds.filter(t => t !== id)
+      : [...formData.tagIds, id];
+    setFormData({ ...formData, tagIds: updated });
+  };
+
+  const toggleContentWarning = (id: string) => {
+    const updated = formData.contentWarnings.includes(id)
+      ? formData.contentWarnings.filter(w => w !== id)
+      : [...formData.contentWarnings, id];
+    setFormData({ ...formData, contentWarnings: updated });
+  };
+
+  const handleAgeRatingChange = (value: string) => {
+    // Đổi khỏi 18+ thì xóa luôn cảnh báo đã chọn — field này chỉ có ý nghĩa khi đủ 18+,
+    // giữ lại giá trị cũ ẩn đi dễ gây hiểu nhầm là vẫn đang áp dụng.
+    setFormData({
+      ...formData,
+      ageRating: value,
+      contentWarnings: value === "MATURE" ? formData.contentWarnings : [],
+    });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col lg:flex-row gap-8 w-full py-6 text-creator-text">
+      {/* Left Column - Form Fields */}
+      <div className="flex-1 space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold text-white mb-1">Thông tin cốt lõi</h2>
+          <p className="text-sm text-creator-muted">Hãy xác định những đặc điểm cơ bản của series.</p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Tiêu đề Series</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="w-full bg-creator-sidebar border border-creator-border rounded-md px-4 py-3 text-white placeholder-creator-muted focus:outline-none focus:border-creator-gold transition-colors"
+              placeholder="Enter an epic title..."
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Tổng quan nội dung</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={4}
+              className="w-full bg-creator-sidebar border border-creator-border rounded-md px-4 py-3 text-white placeholder-creator-muted focus:outline-none focus:border-creator-gold transition-colors"
+              placeholder="What is your series about?"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Loại nội dung</label>
+            <div className="flex gap-4">
+              <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-md border transition-colors ${isUpdate ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${formData.contentType === "COMIC" ? "border-creator-gold bg-creator-gold/10 text-creator-gold" : "border-creator-border bg-creator-sidebar text-creator-muted hover:border-white/30"}`}>
+                <input type="radio" name="contentType" className="hidden" checked={formData.contentType === "COMIC"} onChange={() => !isUpdate && setFormData({ ...formData, contentType: "COMIC" })} disabled={isUpdate} />
+                <span className="font-medium">Truyện Tranh</span>
+              </label>
+              <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-md border transition-colors ${isUpdate ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${formData.contentType === "VIDEO" ? "border-creator-gold bg-creator-gold/10 text-creator-gold" : "border-creator-border bg-creator-sidebar text-creator-muted hover:border-white/30"}`}>
+                <input type="radio" name="contentType" className="hidden" checked={formData.contentType === "VIDEO"} onChange={() => !isUpdate && setFormData({ ...formData, contentType: "VIDEO" })} disabled={isUpdate} />
+                <span className="font-medium">Phim Ngắn</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Phân loại thể loại</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {categories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => toggleCategory(cat.id)}
+                  className={`px-3 py-2 rounded-md text-sm transition-colors border ${formData.categoryIds.includes(cat.id)
+                    ? "bg-creator-gold text-black font-semibold border-creator-gold"
+                    : "bg-creator-sidebar border-creator-border text-creator-muted hover:border-white/30"
+                    }`}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Thẻ tag</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {tags.map((tag) => (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() => toggleTag(tag.id)}
+                  className={`px-3 py-2 rounded-md text-sm transition-colors border ${formData.tagIds.includes(tag.id)
+                    ? "bg-creator-gold text-black font-semibold border-creator-gold"
+                    : "bg-creator-sidebar border-creator-border text-creator-muted hover:border-white/30"
+                    }`}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Ngôn ngữ gốc</label>
+              <div className="relative">
+                <select
+                  value={formData.language}
+                  onChange={(e) => setFormData({ ...formData, language: e.target.value })}
+                  className="w-full bg-creator-sidebar border border-creator-border rounded-md px-4 py-3 text-white appearance-none focus:outline-none focus:border-creator-gold"
+                >
+                  <option value="vi">Tiếng Việt</option>
+                  <option value="en">Tiếng Anh</option>
+                  <option value="jp">Tiếng Nhật</option>
+                  <option value="kr">Tiếng Hàn</option>
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-creator-muted pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Độ tuổi</label>
+              <div className="relative">
+                <select
+                  value={formData.ageRating}
+                  onChange={(e) => handleAgeRatingChange(e.target.value)}
+                  className="w-full bg-creator-sidebar border border-creator-border rounded-md px-4 py-3 text-white appearance-none focus:outline-none focus:border-creator-gold"
+                >
+                  <option value="EVERYONE">Mọi người (G)</option>
+                  <option value="TEEN">Thanh thiếu niên (13+)</option>
+                  <option value="MATURE">Người trưởng thành (18+)</option>
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-creator-muted pointer-events-none" size={16} />
+              </div>
+            </div>
+          </div>
+
+          {formData.ageRating === "MATURE" && (
+            <div>
+              <label className="block text-sm font-medium mb-2">Cảnh báo nội dung</label>
+              <p className="text-xs text-creator-muted mb-2">
+                Khai đúng nội dung nhạy cảm series thực sự có — hệ thống sẽ tự động duyệt các
+                vi phạm AI phát hiện thuộc đúng nhóm đã khai, không cần chờ Staff xem lại.
+              </p>
+              {contentWarningOptionsQuery.isLoading ? (
+                <p className="text-sm text-creator-muted">Đang tải danh sách nhóm...</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {contentWarningOptions.map((warning) => (
+                    <button
+                      key={warning.code}
+                      type="button"
+                      onClick={() => toggleContentWarning(warning.code)}
+                      className={`px-3 py-2 rounded-md text-sm transition-colors border ${formData.contentWarnings.includes(warning.code)
+                        ? "bg-creator-gold text-black font-semibold border-creator-gold"
+                        : "bg-creator-sidebar border-creator-border text-creator-muted hover:border-white/30"
+                        }`}
+                    >
+                      {warning.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right Column - Media Assets */}
+      <div className="w-full lg:w-80 space-y-6">
+        <div className="bg-creator-sidebar border border-creator-border rounded-xl p-5">
+          <h3 className="font-semibold text-white mb-4">Tài nguyên đa phương tiện</h3>
+
+          <div className="space-y-5">
+            {/* Vertical Poster */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium">Poster dọc</label>
+                <span className="text-xs text-creator-muted">Tỷ lệ 2:3</span>
+              </div>
+              <div
+                onClick={() => posterInputRef.current?.click()}
+                className={`relative w-[160px] aspect-[2/3] mx-auto rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors overflow-hidden group ${posterPreview ? "border-creator-gold" : "border-creator-border hover:border-creator-gold/50"
+                  }`}
+              >
+                {posterPreview ? (
+                  <>
+                    <img src={posterPreview} alt="Poster Preview" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Upload size={20} className="text-white mb-1" />
+                      <span className="text-xs font-medium text-white">Đổi Poster</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 bg-creator-border rounded-full flex items-center justify-center mb-2">
+                      <ImageIcon size={18} className="text-creator-muted" />
+                    </div>
+                    <span className="text-xs text-creator-muted px-4 text-center">Tải Poster lên</span>
+                  </>
+                )}
+                <input
+                  type="file"
+                  ref={posterInputRef}
+                  onChange={handlePosterUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+              </div>
+            </div>
+
+            {/* Widescreen Banner */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium">Banner ngang</label>
+                <span className="text-xs text-creator-muted">Tỷ lệ 16:9</span>
+              </div>
+              <div
+                onClick={() => bannerInputRef.current?.click()}
+                className={`relative w-full aspect-video rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors overflow-hidden group ${bannerPreview ? "border-creator-gold" : "border-creator-border hover:border-creator-gold/50"
+                  }`}
+              >
+                {bannerPreview ? (
+                  <>
+                    <img src={bannerPreview} alt="Banner Preview" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Upload size={20} className="text-white mb-1" />
+                      <span className="text-xs font-medium text-white">Đổi Banner</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 bg-creator-border rounded-full flex items-center justify-center mb-2">
+                      <ImageIcon size={18} className="text-creator-muted" />
+                    </div>
+                    <span className="text-xs text-creator-muted px-4 text-center">Nhấp hoặc kéo ảnh vào để tải banner lên</span>
+                  </>
+                )}
+                <input
+                  type="file"
+                  ref={bannerInputRef}
+                  onChange={handleBannerUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 pt-4 border-t border-creator-border">
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-5 py-2.5 rounded-md text-sm font-medium text-creator-muted hover:text-white transition-colors"
+            >
+              Hủy
+            </button>
+          )}
+          <button
+            type="submit"
+            className="px-5 py-2.5 rounded-md text-sm font-medium bg-creator-gold text-black hover:bg-creator-gold-hover transition-colors flex items-center gap-2"
+          >
+            {isUpdate ? "Lưu Thay Đổi" : "Tiếp Tục"}
+            <Check size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Modal Cắt Ảnh Poster & Banner */}
+      <ImageCropModal
+        isOpen={cropModalState.isOpen}
+        imageSrc={cropModalState.imageSrc}
+        aspectRatio={cropModalState.aspectRatio}
+        aspectRatioLabel={cropModalState.aspectRatioLabel}
+        title={cropModalState.title}
+        originalFileName={cropModalState.originalFileName}
+        onClose={() => setCropModalState((prev) => ({ ...prev, isOpen: false }))}
+        onCropComplete={handleCropComplete}
+      />
+    </form>
+  );
+}
